@@ -1,0 +1,29 @@
+{
+  "name": "@snapnedit/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "snapnedit-mcp": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@snapnedit/sdk": "*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@snapnedit/shared": "*"
+  }
+}
