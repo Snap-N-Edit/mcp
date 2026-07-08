@@ -71,9 +71,9 @@ describe('TOOL_DESCRIPTORS — exhaustive coverage over OPERATION_IDS', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  test('mask-guided ops (magic-eraser, generative-fill) are the only requiresMask:true entries', () => {
+  test('mask-guided ops (magic-eraser, generative-fill, remove-watermark) are the only requiresMask:true entries', () => {
     const maskOps = TOOL_DESCRIPTORS.filter((d) => d.requiresMask).map((d) => d.operation).sort();
-    expect(maskOps).toEqual(['generative-fill', 'magic-eraser']);
+    expect(maskOps).toEqual(['generative-fill', 'magic-eraser', 'remove-watermark']);
   });
 });
 

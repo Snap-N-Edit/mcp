@@ -108,9 +108,9 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
   'remove-watermark': {
     operation: 'remove-watermark',
     name: 'remove_watermark',
-    description: 'Automatically detect and remove watermarks, logos, and text overlays from a photo — no mask required.',
+    description: 'Erase the masked watermark, logo, or text overlay from a photo with content-aware AI inpainting.',
     params: EMPTY_PARAMS,
-    requiresMask: false,
+    requiresMask: true,
   },
 };
 
