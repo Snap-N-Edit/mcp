@@ -105,6 +105,13 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     params: { prompt: z.string().min(1).describe('Text prompt describing what to generate inside the masked region.') },
     requiresMask: true,
   },
+  'remove-watermark': {
+    operation: 'remove-watermark',
+    name: 'remove_watermark',
+    description: 'Automatically detect and remove watermarks, logos, and text overlays from a photo — no mask required.',
+    params: EMPTY_PARAMS,
+    requiresMask: false,
+  },
 };
 
 /**
