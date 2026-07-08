@@ -102,7 +102,13 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     operation: 'generative-fill',
     name: 'generative_fill',
     description: 'Generate new content inside the masked region of a photo, guided by a text prompt.',
-    params: { prompt: z.string().min(1).describe('Text prompt describing what to generate inside the masked region.') },
+    params: {
+      prompt: z.string().min(1).describe('Text prompt describing what to generate inside the masked region.'),
+      mode: z
+        .enum(['fast', 'quality'])
+        .optional()
+        .describe('Speed/quality: "quality" (default, ~25s, faithful to the prompt) or "fast" (~7s, weaker adherence).'),
+    },
     requiresMask: true,
   },
   'remove-watermark': {
