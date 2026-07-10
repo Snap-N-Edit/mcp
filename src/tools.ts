@@ -78,9 +78,9 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
   'style-transfer': {
     operation: 'style-transfer',
     name: 'style_transfer',
-    description: 'Restyle a photo into an art style (anime, watercolor, oil painting, or sketch).',
+    description: 'Restyle a photo with a painterly art filter (vivid, pastel, mosaic, or storm).',
     params: {
-      style: z.enum(['anime', 'watercolor', 'oil-painting', 'sketch']).optional().describe('Target art style. Defaults to "anime".'),
+      style: z.enum(['vivid', 'pastel', 'mosaic', 'storm']).optional().describe('Target art filter. Defaults to "vivid".'),
     },
     requiresMask: false,
   },

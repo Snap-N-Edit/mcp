@@ -128,10 +128,10 @@ describe('handler — params forwarding', () => {
     const { sdk, calls } = stubSdk(async () => okResult);
     const tool = toolByName(buildTools(sdk), 'style_transfer');
 
-    await tool.handler({ image: b64([1]), style: 'watercolor' });
+    await tool.handler({ image: b64([1]), style: 'pastel' });
 
     expect(calls[0]?.operation).toBe('style-transfer');
-    expect(calls[0]?.opts).toEqual({ params: { style: 'watercolor' } });
+    expect(calls[0]?.opts).toEqual({ params: { style: 'pastel' } });
   });
 
   test('generative_fill requires `prompt` — missing it is rejected as invalid input, not forwarded to sdk.run', async () => {
