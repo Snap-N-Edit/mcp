@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { OPERATION_IDS, type OperationId } from '@snapnedit/shared';
-import { SnapneditApiError, type RunOptions, type RunResult, type SnapneditClient } from '@snapnedit/sdk';
+import { SnapneditApiError, type DesignSpec, type RunOptions, type RunResult, type SnapneditClient } from '@snapnedit/sdk';
 import { buildTools, TOOL_DESCRIPTORS, type BuiltTool } from '../src/tools.js';
+import { buildDesignTools } from '../src/designTools.js';
 
 type RecordedRun = { operation: OperationId; input: Uint8Array; opts: RunOptions | undefined };
 
@@ -31,8 +32,53 @@ function stubSdk(
     getJob: async () => {
       throw new Error('stubSdk: getJob() should never be called directly by a tool handler');
     },
+    createDesign: async () => {
+      throw new Error('stubSdk: createDesign() should never be called by an image-op tool handler');
+    },
+    renderDesign: async () => {
+      throw new Error('stubSdk: renderDesign() should never be called by an image-op tool handler');
+    },
   };
   return { sdk, calls };
+}
+
+/**
+ * A `SnapneditClient` stub for the DESIGN tools — records `createDesign`
+ * specs + `renderDesign` calls; the image-op methods throw (a design tool
+ * must never reach `run`/`upload`). `overrides` lets a test swap in a
+ * throwing `createDesign`/`renderDesign` to exercise the error path.
+ */
+function designStubSdk(
+  overrides: Partial<Pick<SnapneditClient, 'createDesign' | 'renderDesign'>> = {},
+): {
+  sdk: SnapneditClient;
+  createdSpecs: DesignSpec[];
+  renderCalls: { spec?: DesignSpec; format?: 'png' | 'jpeg' }[];
+} {
+  const createdSpecs: DesignSpec[] = [];
+  const renderCalls: { spec?: DesignSpec; format?: 'png' | 'jpeg' }[] = [];
+  const throwImageOp = (name: string) => async (): Promise<never> => {
+    throw new Error(`designStubSdk: ${name}() should never be called by a design tool handler`);
+  };
+  const sdk: SnapneditClient = {
+    run: throwImageOp('run'),
+    upload: throwImageOp('upload'),
+    createJob: throwImageOp('createJob'),
+    getJob: throwImageOp('getJob'),
+    createDesign:
+      overrides.createDesign ??
+      (async (spec) => {
+        createdSpecs.push(spec);
+        return { document: { id: 'doc-1', width: spec.width } };
+      }),
+    renderDesign:
+      overrides.renderDesign ??
+      (async (input) => {
+        renderCalls.push({ spec: input.spec, format: input.format });
+        return new Uint8Array([1, 2, 3]);
+      }),
+  };
+  return { sdk, createdSpecs, renderCalls };
 }
 
 function toolByName(tools: readonly BuiltTool[], name: string): BuiltTool {
@@ -219,5 +265,83 @@ describe('handler — error mapping', () => {
 
     expect(result.isError).toBe(true);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('design tools — create_design / render_design', () => {
+  const spec = { width: 800, height: 600, background: '#ffffff', layers: [{ type: 'text', text: 'Hi', x: 400, y: 300 }] };
+
+  test('buildDesignTools exposes exactly create_design + render_design', () => {
+    const { sdk } = designStubSdk();
+    const names = buildDesignTools(sdk).map((t) => t.name).sort();
+    expect(names).toEqual(['create_design', 'render_design']);
+  });
+
+  test('create_design validates the spec, calls sdk.createDesign, returns the document JSON as text', async () => {
+    const { sdk, createdSpecs } = designStubSdk();
+    const tool = toolByName(buildDesignTools(sdk), 'create_design');
+
+    const result = await tool.handler(spec);
+
+    expect(result.isError).toBeUndefined();
+    expect(createdSpecs).toHaveLength(1);
+    expect(createdSpecs[0]?.width).toBe(800);
+    const [block] = result.content;
+    const text = block?.type === 'text' ? block.text : '';
+    expect(JSON.parse(text)).toEqual({ id: 'doc-1', width: 800 });
+  });
+
+  test('create_design rejects an invalid spec before calling the sdk', async () => {
+    const { sdk, createdSpecs } = designStubSdk();
+    const tool = toolByName(buildDesignTools(sdk), 'create_design');
+
+    const result = await tool.handler({ width: -1, height: 600 });
+
+    expect(result.isError).toBe(true);
+    expect(createdSpecs).toHaveLength(0);
+  });
+
+  test('render_design strips format, calls sdk.renderDesign, returns a base64 image block', async () => {
+    const { sdk, renderCalls } = designStubSdk();
+    const tool = toolByName(buildDesignTools(sdk), 'render_design');
+
+    const result = await tool.handler({ ...spec, format: 'jpeg' });
+
+    expect(result.isError).toBeUndefined();
+    expect(renderCalls).toHaveLength(1);
+    expect(renderCalls[0]?.format).toBe('jpeg');
+    expect(renderCalls[0]?.spec?.width).toBe(800);
+    const [block] = result.content;
+    expect(block?.type).toBe('image');
+    if (block?.type === 'image') {
+      expect(block.mimeType).toBe('image/jpeg');
+      expect(Array.from(Buffer.from(block.data, 'base64'))).toEqual([1, 2, 3]);
+    }
+  });
+
+  test('render_design defaults to png when no format given', async () => {
+    const { sdk, renderCalls } = designStubSdk();
+    const tool = toolByName(buildDesignTools(sdk), 'render_design');
+
+    const result = await tool.handler(spec);
+
+    expect(renderCalls[0]?.format).toBe('png');
+    const [block] = result.content;
+    expect(block?.type === 'image' ? block.mimeType : '').toBe('image/png');
+  });
+
+  test('a SnapneditApiError from createDesign becomes an isError result', async () => {
+    const { sdk } = designStubSdk({
+      createDesign: async () => {
+        throw new SnapneditApiError('insufficient_credits', 402, 'no credits');
+      },
+    });
+    const tool = toolByName(buildDesignTools(sdk), 'create_design');
+
+    const result = await tool.handler(spec);
+
+    expect(result.isError).toBe(true);
+    const [block] = result.content;
+    expect(block?.type === 'text' ? block.text : '').toContain('insufficient_credits');
   });
 });

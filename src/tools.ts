@@ -26,6 +26,7 @@ import { SnapneditApiError, type RunOptions, type SnapneditClient } from '@snapn
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { buildDesignTools } from './designTools.js';
 
 /**
  * One entry per `OperationId`, describing the MCP tool that exposes it.
@@ -248,7 +249,10 @@ export function registerTools(
   sdk: SnapneditClient,
   descriptors: readonly ToolDescriptor[] = TOOL_DESCRIPTORS,
 ): void {
-  for (const tool of buildTools(sdk, descriptors)) {
+  // The per-operation AI tools, PLUS the design tools (create_design /
+  // render_design) — the latter let an agent compose a design, not just edit
+  // an image (see `designTools.ts`).
+  for (const tool of [...buildTools(sdk, descriptors), ...buildDesignTools(sdk)]) {
     server.registerTool(tool.name, tool.config, tool.handler);
   }
 }
