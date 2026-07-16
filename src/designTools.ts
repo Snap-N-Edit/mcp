@@ -7,17 +7,65 @@ import type { BuiltTool } from './tools.js';
 /**
  * DESIGN tools — the agent-facing way to CREATE a design (not just run an AI op
  * on an image): `create_design` compiles a declarative spec into an editor
- * document, and `render_design` renders that spec straight to a PNG. Both proxy
- * to the api's `/designs` + `/designs/render` through `@snapnedit/sdk`. The zod
- * shape below mirrors the api's `designSpecSchema` (the api validates again).
+ * document, and `render_design` renders that spec straight to a PNG/JPEG (or a
+ * PDF for multi-page). Both proxy to the api's `/designs` + `/designs/render`
+ * through `@snapnedit/sdk`.
+ *
+ * The zod shape below is a FULL-PARITY mirror of the api's `designSpecSchema`
+ * (kept local so this package stays decoupled from `editor-core`, the same
+ * self-contained-descriptor principle `tools.ts` follows; the api re-validates).
+ * Every editor layer type + style is expressible here.
  */
+
+const blendModeSchema = z.enum(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten']);
 
 const baseLayerShape = {
   x: z.number().describe('center x in document px'),
   y: z.number().describe('center y in document px'),
   rotation: z.number().optional().describe('degrees, clockwise'),
+  scaleX: z.number().optional().describe('horizontal scale (negative flips)'),
+  scaleY: z.number().optional().describe('vertical scale (negative flips)'),
   opacity: z.number().min(0).max(1).optional(),
+  blendMode: blendModeSchema.optional(),
+  visible: z.boolean().optional(),
+  locked: z.boolean().optional(),
+  name: z.string().optional(),
 };
+
+const textRun = z.object({
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  color: z.string().optional(),
+  fontFamily: z.string().optional(),
+  fontSize: z.number().positive().optional(),
+});
+const textShadow = z.object({ color: z.string(), blur: z.number(), offsetX: z.number(), offsetY: z.number() });
+const adjustments = z.object({
+  brightness: z.number().optional(),
+  contrast: z.number().optional(),
+  saturation: z.number().optional(),
+  exposure: z.number().optional(),
+  temperature: z.number().optional(),
+  tint: z.number().optional(),
+  hue: z.number().optional(),
+});
+const crop = z.object({
+  shape: z.enum(['rect', 'ellipse']),
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+});
+const frameFill = z.object({
+  url: z.string(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+  zoom: z.number().positive().optional(),
+  offsetX: z.number().optional(),
+  offsetY: z.number().optional(),
+});
 
 const textLayer = z.object({
   type: z.literal('text'),
@@ -28,13 +76,22 @@ const textLayer = z.object({
   bold: z.boolean().optional(),
   italic: z.boolean().optional(),
   align: z.enum(['left', 'center', 'right']).optional(),
+  letterSpacing: z.number().optional(),
+  stroke: z.string().nullable().optional().describe('outline color, or null for none'),
+  strokeWidth: z.number().optional(),
+  shadow: textShadow.nullable().optional(),
+  runs: z.array(textRun).optional().describe('multi-style character-range overrides'),
+  width: z.number().positive().optional(),
+  height: z.number().positive().optional(),
   ...baseLayerShape,
 });
 const imageLayer = z.object({
   type: z.literal('image'),
   url: z.string().describe('image URL (fetched at render time)'),
-  width: z.number().positive(),
-  height: z.number().positive(),
+  width: z.number().positive().describe('natural pixel width'),
+  height: z.number().positive().describe('natural pixel height'),
+  adjustments: adjustments.optional(),
+  crop: crop.optional(),
   ...baseLayerShape,
 });
 const shapeLayer = z.object({
@@ -51,15 +108,27 @@ const elementLayer = z.object({
   type: z.literal('element'),
   svg: z.string().describe('inline SVG (use currentColor for the recolorable fill)'),
   color: z.string().optional(),
-  size: z.number().positive().optional(),
+  size: z.number().positive().optional().describe('square box shorthand'),
+  width: z.number().positive().optional(),
+  height: z.number().positive().optional(),
   ...baseLayerShape,
 });
+const frameLayer = z.object({
+  type: z.literal('frame'),
+  frameShape: z.enum(['rect', 'ellipse']).optional(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+  fill: frameFill.nullable().optional().describe('contained image, or null for an empty placeholder'),
+  ...baseLayerShape,
+});
+
+const layerSchema = z.discriminatedUnion('type', [textLayer, imageLayer, shapeLayer, elementLayer, frameLayer]);
 
 const designSpecShape = {
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   background: z.string().optional().describe('"transparent" or a solid CSS color like "#ffffff"'),
-  layers: z.array(z.discriminatedUnion('type', [textLayer, imageLayer, shapeLayer, elementLayer])).default([]),
+  layers: z.array(layerSchema).default([]),
 };
 
 const designSpecSchema = z.object(designSpecShape);
@@ -83,7 +152,7 @@ export function buildDesignTools(sdk: SnapneditClient): readonly BuiltTool[] {
       config: {
         title: 'create_design',
         description:
-          'Create a multi-layer design (canvas + text/image/shape/element layers) from a declarative spec. Returns the compiled editor document as JSON. Use render_design to get an image.',
+          'Create a multi-layer design (canvas + text/image/shape/element/frame layers) from a declarative spec. Full editor parity: text stroke/shadow/rich-text, image adjustments/crop, frames, blend modes. Returns the compiled editor document as JSON. Use render_design to get an image.',
         inputSchema: designSpecShape,
       },
       handler: async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
@@ -104,18 +173,40 @@ export function buildDesignTools(sdk: SnapneditClient): readonly BuiltTool[] {
       config: {
         title: 'render_design',
         description:
-          'Render a design spec (same shape as create_design) straight to an image. Returns a PNG (or JPEG). Server-side, no browser.',
-        inputSchema: { ...designSpecShape, format: z.enum(['png', 'jpeg']).optional() },
+          'Render a design straight to an image (server-side, no browser). Provide a single-page spec for a PNG/JPEG, OR `pages` (an array of specs) for a multi-page PDF. Same layer shape as create_design.',
+        inputSchema: {
+          ...designSpecShape,
+          pages: z.array(designSpecSchema).optional().describe('multi-page: an array of page specs (renders a PDF)'),
+          format: z.enum(['png', 'jpeg', 'pdf']).optional(),
+        },
       },
       handler: async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
-        const { format: rawFormat, ...specArgs } = rawArgs;
+        const { format: rawFormat, pages: rawPages, ...specArgs } = rawArgs;
+        const format = rawFormat === 'jpeg' ? 'jpeg' : rawFormat === 'pdf' ? 'pdf' : 'png';
+
+        // Multi-page path -> a PDF.
+        if (rawPages !== undefined) {
+          const parsedPages = z.array(designSpecSchema).safeParse(rawPages);
+          if (!parsedPages.success) {
+            return textResult(`invalid pages: ${parsedPages.error.message}`, true);
+          }
+          try {
+            const bytes = await sdk.renderDesign({ pages: parsedPages.data as DesignSpec[], format: 'pdf' });
+            return { content: [{ type: 'resource', resource: { uri: 'design://render.pdf', mimeType: 'application/pdf', blob: Buffer.from(bytes).toString('base64') } }] };
+          } catch (err) {
+            return apiErrorResult(err, 'render_design');
+          }
+        }
+
         const parsed = designSpecSchema.safeParse(specArgs);
         if (!parsed.success) {
           return textResult(`invalid design spec: ${parsed.error.message}`, true);
         }
-        const format = rawFormat === 'jpeg' ? 'jpeg' : 'png';
         try {
           const bytes = await sdk.renderDesign({ spec: parsed.data as DesignSpec, format });
+          if (format === 'pdf') {
+            return { content: [{ type: 'resource', resource: { uri: 'design://render.pdf', mimeType: 'application/pdf', blob: Buffer.from(bytes).toString('base64') } }] };
+          }
           return { content: [{ type: 'image', data: Buffer.from(bytes).toString('base64'), mimeType: format === 'jpeg' ? 'image/jpeg' : 'image/png' }] };
         } catch (err) {
           return apiErrorResult(err, 'render_design');

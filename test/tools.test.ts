@@ -35,6 +35,9 @@ function stubSdk(
     createDesign: async () => {
       throw new Error('stubSdk: createDesign() should never be called by an image-op tool handler');
     },
+    createDesignPages: async () => {
+      throw new Error('stubSdk: createDesignPages() should never be called by an image-op tool handler');
+    },
     renderDesign: async () => {
       throw new Error('stubSdk: renderDesign() should never be called by an image-op tool handler');
     },
@@ -53,10 +56,12 @@ function designStubSdk(
 ): {
   sdk: SnapneditClient;
   createdSpecs: DesignSpec[];
-  renderCalls: { spec?: DesignSpec; format?: 'png' | 'jpeg' }[];
+  renderCalls: { spec?: DesignSpec; pages?: DesignSpec[]; format?: 'png' | 'jpeg' | 'pdf' }[];
+  pageCalls: DesignSpec[][];
 } {
   const createdSpecs: DesignSpec[] = [];
-  const renderCalls: { spec?: DesignSpec; format?: 'png' | 'jpeg' }[] = [];
+  const renderCalls: { spec?: DesignSpec; pages?: DesignSpec[]; format?: 'png' | 'jpeg' | 'pdf' }[] = [];
+  const pageCalls: DesignSpec[][] = [];
   const throwImageOp = (name: string) => async (): Promise<never> => {
     throw new Error(`designStubSdk: ${name}() should never be called by a design tool handler`);
   };
@@ -65,6 +70,10 @@ function designStubSdk(
     upload: throwImageOp('upload'),
     createJob: throwImageOp('createJob'),
     getJob: throwImageOp('getJob'),
+    createDesignPages: async (spec) => {
+      pageCalls.push(spec.pages);
+      return { documents: spec.pages.map((p, i) => ({ id: `doc-${i}`, width: p.width })) };
+    },
     createDesign:
       overrides.createDesign ??
       (async (spec) => {
@@ -74,11 +83,11 @@ function designStubSdk(
     renderDesign:
       overrides.renderDesign ??
       (async (input) => {
-        renderCalls.push({ spec: input.spec, format: input.format });
+        renderCalls.push({ spec: input.spec, pages: input.pages, format: input.format });
         return new Uint8Array([1, 2, 3]);
       }),
   };
-  return { sdk, createdSpecs, renderCalls };
+  return { sdk, createdSpecs, renderCalls, pageCalls };
 }
 
 function toolByName(tools: readonly BuiltTool[], name: string): BuiltTool {
@@ -343,5 +352,46 @@ describe('design tools — create_design / render_design', () => {
     expect(result.isError).toBe(true);
     const [block] = result.content;
     expect(block?.type === 'text' ? block.text : '').toContain('insufficient_credits');
+  });
+
+  test('render_design with `pages` renders a multi-page PDF (resource block, format pdf)', async () => {
+    const { sdk, renderCalls } = designStubSdk();
+    const tool = toolByName(buildDesignTools(sdk), 'render_design');
+
+    const result = await tool.handler({
+      pages: [
+        { width: 100, height: 100, layers: [] },
+        { width: 120, height: 80, layers: [] },
+      ],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(renderCalls).toHaveLength(1);
+    expect(renderCalls[0]?.format).toBe('pdf');
+    expect(renderCalls[0]?.pages).toHaveLength(2);
+    const [block] = result.content;
+    expect(block?.type).toBe('resource');
+    if (block?.type === 'resource') {
+      expect(block.resource.mimeType).toBe('application/pdf');
+    }
+  });
+
+  test('create_design accepts full-parity layers (frame + image adjustments/crop + text effects)', async () => {
+    const { sdk, createdSpecs } = designStubSdk();
+    const tool = toolByName(buildDesignTools(sdk), 'create_design');
+
+    const result = await tool.handler({
+      width: 400,
+      height: 400,
+      layers: [
+        { type: 'frame', frameShape: 'ellipse', x: 200, y: 200, width: 300, height: 300, fill: { url: 'https://cdn.example.com/p.jpg', width: 800, height: 600, zoom: 1.2 } },
+        { type: 'image', url: 'https://cdn.example.com/q.jpg', x: 100, y: 100, width: 200, height: 200, adjustments: { brightness: 0.2, saturation: -0.5 }, crop: { shape: 'rect', x: 0, y: 0, width: 100, height: 100 } },
+        { type: 'text', text: 'Hi', x: 200, y: 380, stroke: '#ff0000', strokeWidth: 3, shadow: { color: '#000', blur: 2, offsetX: 1, offsetY: 1 }, blendMode: 'multiply' },
+      ],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(createdSpecs).toHaveLength(1);
+    expect(createdSpecs[0]?.layers?.map((l) => l.type)).toEqual(['frame', 'image', 'text']);
   });
 });
