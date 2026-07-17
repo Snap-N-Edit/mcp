@@ -19,6 +19,12 @@ import type { BuiltTool } from './tools.js';
 
 const blendModeSchema = z.enum(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten']);
 
+const effectsSchema = z.object({
+  shadow: z.object({ color: z.string(), blur: z.number(), offsetX: z.number(), offsetY: z.number(), opacity: z.number().min(0).max(1).optional() }).nullable().optional(),
+  blur: z.number().nonnegative().optional(),
+  glow: z.object({ color: z.string(), blur: z.number() }).nullable().optional(),
+});
+
 const baseLayerShape = {
   x: z.number().describe('center x in document px'),
   y: z.number().describe('center y in document px'),
@@ -30,6 +36,7 @@ const baseLayerShape = {
   visible: z.boolean().optional(),
   locked: z.boolean().optional(),
   name: z.string().optional(),
+  effects: effectsSchema.optional().describe('drop shadow / blur / glow'),
 };
 
 const textRun = z.object({
