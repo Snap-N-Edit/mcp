@@ -85,6 +85,7 @@ const textLayer = z.object({
   italic: z.boolean().optional(),
   align: z.enum(['left', 'center', 'right']).optional(),
   letterSpacing: z.number().optional(),
+  lineHeight: z.number().positive().optional().describe('line spacing as a multiple of fontSize (default ~1.2)'),
   stroke: z.string().nullable().optional().describe('outline color, or null for none'),
   strokeWidth: z.number().optional(),
   shadow: textShadow.nullable().optional(),
