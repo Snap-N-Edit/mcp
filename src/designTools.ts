@@ -127,7 +127,10 @@ const layerSchema = z.discriminatedUnion('type', [textLayer, imageLayer, shapeLa
 const designSpecShape = {
   width: z.number().int().positive(),
   height: z.number().int().positive(),
-  background: z.string().optional().describe('"transparent" or a solid CSS color like "#ffffff"'),
+  background: z
+    .union([z.string(), z.object({ from: z.string(), to: z.string(), angle: z.number().optional() })])
+    .optional()
+    .describe('"transparent", a solid CSS color like "#ffffff", or a gradient {from,to,angle} (angle: 0=→, 90=↓)'),
   layers: z.array(layerSchema).default([]),
 };
 
