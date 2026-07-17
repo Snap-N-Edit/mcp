@@ -86,6 +86,7 @@ const textLayer = z.object({
   align: z.enum(['left', 'center', 'right']).optional(),
   letterSpacing: z.number().optional(),
   lineHeight: z.number().positive().optional().describe('line spacing as a multiple of fontSize (default ~1.2)'),
+  fillGradient: z.object({ from: z.string(), to: z.string(), angle: z.number().optional() }).optional().describe('linear gradient filling the text (overrides color)'),
   stroke: z.string().nullable().optional().describe('outline color, or null for none'),
   strokeWidth: z.number().optional(),
   shadow: textShadow.nullable().optional(),
@@ -103,12 +104,14 @@ const imageLayer = z.object({
   crop: crop.optional(),
   ...baseLayerShape,
 });
+const gradientFill = z.object({ from: z.string(), to: z.string(), angle: z.number().optional() });
+
 const shapeLayer = z.object({
   type: z.literal('shape'),
   shape: z.enum(['rect', 'ellipse', 'line', 'triangle', 'star']),
   width: z.number().positive(),
   height: z.number().positive(),
-  fill: z.string().nullable().optional(),
+  fill: z.union([z.string(), gradientFill]).nullable().optional().describe('solid CSS color, a linear gradient {from,to,angle}, or null'),
   stroke: z.string().nullable().optional(),
   strokeWidth: z.number().optional(),
   ...baseLayerShape,
