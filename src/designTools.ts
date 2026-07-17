@@ -129,7 +129,17 @@ const frameLayer = z.object({
   ...baseLayerShape,
 });
 
-const layerSchema = z.discriminatedUnion('type', [textLayer, imageLayer, shapeLayer, elementLayer, frameLayer]);
+const pathLayer = z.object({
+  type: z.literal('path'),
+  points: z.array(z.object({ x: z.number(), y: z.number() })).min(2).describe('absolute doc-space points; position derived from these'),
+  stroke: z.string().optional(),
+  strokeWidth: z.number().positive().optional(),
+  fill: z.string().nullable().optional(),
+  closed: z.boolean().optional(),
+  ...baseLayerShape,
+});
+
+const layerSchema = z.discriminatedUnion('type', [textLayer, imageLayer, shapeLayer, elementLayer, frameLayer, pathLayer]);
 
 const designSpecShape = {
   width: z.number().int().positive(),
