@@ -56,11 +56,11 @@ function designStubSdk(
 ): {
   sdk: SnapneditClient;
   createdSpecs: DesignSpec[];
-  renderCalls: { spec?: DesignSpec; pages?: DesignSpec[]; format?: 'png' | 'jpeg' | 'pdf' }[];
+  renderCalls: { spec?: DesignSpec | undefined; pages?: DesignSpec[] | undefined; format?: 'png' | 'jpeg' | 'pdf' | undefined }[];
   pageCalls: DesignSpec[][];
 } {
   const createdSpecs: DesignSpec[] = [];
-  const renderCalls: { spec?: DesignSpec; pages?: DesignSpec[]; format?: 'png' | 'jpeg' | 'pdf' }[] = [];
+  const renderCalls: { spec?: DesignSpec | undefined; pages?: DesignSpec[] | undefined; format?: 'png' | 'jpeg' | 'pdf' | undefined }[] = [];
   const pageCalls: DesignSpec[][] = [];
   const throwImageOp = (name: string) => async (): Promise<never> => {
     throw new Error(`designStubSdk: ${name}() should never be called by a design tool handler`);
@@ -342,7 +342,7 @@ describe('design tools — create_design / render_design', () => {
   test('a SnapneditApiError from createDesign becomes an isError result', async () => {
     const { sdk } = designStubSdk({
       createDesign: async () => {
-        throw new SnapneditApiError('insufficient_credits', 402, 'no credits');
+        throw new SnapneditApiError('payment_required', 402, 'no credits');
       },
     });
     const tool = toolByName(buildDesignTools(sdk), 'create_design');
@@ -351,7 +351,7 @@ describe('design tools — create_design / render_design', () => {
 
     expect(result.isError).toBe(true);
     const [block] = result.content;
-    expect(block?.type === 'text' ? block.text : '').toContain('insufficient_credits');
+    expect(block?.type === 'text' ? block.text : '').toContain('payment_required');
   });
 
   test('render_design with `pages` renders a multi-page PDF (resource block, format pdf)', async () => {

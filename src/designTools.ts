@@ -37,6 +37,7 @@ const baseLayerShape = {
   locked: z.boolean().optional(),
   name: z.string().optional(),
   effects: effectsSchema.optional().describe('drop shadow / blur / glow'),
+  group: z.string().optional().describe('optional group key — layers sharing it are grouped (move/select as a unit)'),
 };
 
 const textRun = z.object({
