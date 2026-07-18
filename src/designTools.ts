@@ -59,6 +59,8 @@ const adjustments = z.object({
   temperature: z.number().optional(),
   tint: z.number().optional(),
   hue: z.number().optional(),
+  vignette: z.number().optional(),
+  sharpen: z.number().optional(),
 });
 const crop = z.object({
   shape: z.enum(['rect', 'ellipse']),
