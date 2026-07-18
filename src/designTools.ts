@@ -143,6 +143,7 @@ const pathLayer = z.object({
   strokeWidth: z.number().positive().optional(),
   fill: z.string().nullable().optional(),
   closed: z.boolean().optional(),
+  smooth: z.boolean().optional().describe('render points as a smooth Bézier curve (pen tool) instead of a polyline'),
   ...baseLayerShape,
 });
 
