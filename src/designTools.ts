@@ -144,6 +144,10 @@ const pathLayer = z.object({
   fill: z.string().nullable().optional(),
   closed: z.boolean().optional(),
   smooth: z.boolean().optional().describe('render points as a smooth Bézier curve (pen tool) instead of a polyline'),
+  handles: z
+    .array(z.object({ in: z.object({ x: z.number(), y: z.number() }).nullable(), out: z.object({ x: z.number(), y: z.number() }).nullable() }))
+    .optional()
+    .describe('explicit per-anchor Bézier control handles (absolute doc-space, index-aligned with points); overrides smooth'),
   ...baseLayerShape,
 });
 
