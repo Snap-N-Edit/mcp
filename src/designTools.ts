@@ -110,12 +110,17 @@ const gradientFill = z.object({ from: z.string(), to: z.string(), angle: z.numbe
 
 const shapeLayer = z.object({
   type: z.literal('shape'),
-  shape: z.enum(['rect', 'ellipse', 'line', 'triangle', 'star']),
+  shape: z.enum(['rect', 'ellipse', 'line', 'triangle', 'star', 'polygon', 'arrow']),
   width: z.number().positive(),
   height: z.number().positive(),
   fill: z.union([z.string(), gradientFill]).nullable().optional().describe('solid CSS color, a linear gradient {from,to,angle}, or null'),
   stroke: z.string().nullable().optional(),
   strokeWidth: z.number().optional(),
+  sides: z.number().int().min(3).max(12).optional().describe('vertex count for a "polygon" shape, 3-12 (default 6; ignored by other shapes)'),
+  points: z.number().int().min(3).max(12).optional().describe('spike count for a "star" shape, 3-12 (default 5; ignored by other shapes)'),
+  innerRatio: z.number().min(0.2).max(0.9).optional().describe('inner/outer radius ratio for a "star" shape, 0.2-0.9 (default 0.4; ignored by other shapes)'),
+  startHead: z.enum(['none', 'arrow']).optional().describe('arrowhead at the start of a "line" shape (ignored by other shapes)'),
+  endHead: z.enum(['none', 'arrow']).optional().describe('arrowhead at the end of a "line" shape (ignored by other shapes)'),
   ...baseLayerShape,
 });
 const elementLayer = z.object({
