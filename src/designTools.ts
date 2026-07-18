@@ -38,6 +38,7 @@ const baseLayerShape = {
   name: z.string().optional(),
   effects: effectsSchema.optional().describe('drop shadow / blur / glow'),
   group: z.string().optional().describe('optional group key — layers sharing it are grouped (move/select as a unit)'),
+  clip: z.object({ shape: z.enum(['rect', 'ellipse']), radius: z.number().optional() }).optional().describe('clip/mask the layer to a shape within its box (radius = rounded corners)'),
 };
 
 const textRun = z.object({
