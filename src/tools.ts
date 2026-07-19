@@ -145,6 +145,19 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     },
     requiresMask: false,
   },
+  relight: {
+    operation: 'relight',
+    name: 'relight',
+    description:
+      'Re-light a portrait or scene from a chosen light direction (left, right, front, top, or backlit), baking a relit image.',
+    params: {
+      direction: z
+        .enum(['left', 'right', 'front', 'top', 'backlit'])
+        .optional()
+        .describe('Where the key light comes from. Defaults to "front".'),
+    },
+    requiresMask: false,
+  },
 };
 
 /**
