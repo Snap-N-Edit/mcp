@@ -119,6 +119,19 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     params: EMPTY_PARAMS,
     requiresMask: true,
   },
+  'ai-denoise': {
+    operation: 'ai-denoise',
+    name: 'ai_denoise',
+    description:
+      'Remove sensor grain and noise from a photo with a learned denoiser that preserves edges and fine detail.',
+    params: {
+      strength: z
+        .enum(['0.25', '0.5', '0.75', '1'])
+        .optional()
+        .describe('How strongly to blend the denoised result over the original. Defaults to "1" (full).'),
+    },
+    requiresMask: false,
+  },
 };
 
 /**
