@@ -109,6 +109,11 @@ const tone = z.object({
 });
 const gradientMapStop = z.object({ color: z.string(), position: z.number() });
 const gradientMap = z.object({ stops: z.array(gradientMapStop) });
+const localAdjustRegion = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('radial'), cx: z.number(), cy: z.number(), rx: z.number(), ry: z.number(), feather: z.number() }),
+  z.object({ type: z.literal('graduated'), x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() }),
+]);
+const localAdjustment = z.object({ region: localAdjustRegion, adjustments });
 const frameFill = z.object({
   url: z.string(),
   width: z.number().positive(),
@@ -147,6 +152,7 @@ const imageLayer = z.object({
   adjustments: adjustments.optional(),
   tone: tone.optional().describe('curves & levels: per-channel value LUT (composite + per-R/G/B curves of {x,y} points 0..1, plus composite levels)'),
   gradientMap: gradientMap.optional().describe('gradient map: remaps luminance onto a multi-stop gradient {stops:[{color:CSS hex, position:0..1}, …]} (≥2 stops); the multi-stop generalization of duotone'),
+  localAdjustments: z.array(localAdjustment).optional().describe('local/selective adjustments: a list of {region, adjustments} applied to a REGION (radial ellipse {cx,cy,rx,ry,feather} or graduated line {x1,y1,x2,y2}, all in 0..1 box-UV) rather than the whole image; composited on top in order'),
   crop: crop.optional(),
   ...baseLayerShape,
 });
