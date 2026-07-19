@@ -56,6 +56,10 @@ const baseLayerShape = {
   effects: effectsSchema.optional().describe('drop shadow / blur / glow'),
   group: z.string().optional().describe('optional group key — layers sharing it are grouped (move/select as a unit)'),
   clip: z.object({ shape: z.enum(['rect', 'ellipse']), radius: z.number().optional() }).optional().describe('clip/mask the layer to a shape within its box (radius = rounded corners)'),
+  mask: z
+    .object({ data: z.string(), width: z.number().int().positive(), height: z.number().int().positive(), enabled: z.boolean().optional() })
+    .optional()
+    .describe('raster alpha mask stretched across the layer box — grayscale PNG data-URL (white=visible, black=hidden) + its pixel size; usually painted in the editor'),
 };
 
 const textRun = z.object({
