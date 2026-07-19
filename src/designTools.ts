@@ -17,7 +17,24 @@ import type { BuiltTool } from './tools.js';
  * Every editor layer type + style is expressible here.
  */
 
-const blendModeSchema = z.enum(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten']);
+const blendModeSchema = z.enum([
+  'normal',
+  'multiply',
+  'screen',
+  'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
+]);
 
 const effectsSchema = z.object({
   shadow: z.object({ color: z.string(), blur: z.number(), offsetX: z.number(), offsetY: z.number(), opacity: z.number().min(0).max(1).optional() }).nullable().optional(),
@@ -61,6 +78,7 @@ const adjustments = z.object({
   hue: z.number().optional(),
   vignette: z.number().optional(),
   sharpen: z.number().optional(),
+  denoise: z.number().optional(),
 });
 const crop = z.object({
   shape: z.enum(['rect', 'ellipse']),
