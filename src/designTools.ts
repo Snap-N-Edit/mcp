@@ -83,6 +83,7 @@ const adjustments = z.object({
   vignette: z.number().optional(),
   sharpen: z.number().optional(),
   denoise: z.number().optional(),
+  grain: z.number().optional(),
 });
 const crop = z.object({
   shape: z.enum(['rect', 'ellipse']),
