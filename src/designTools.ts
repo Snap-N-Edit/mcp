@@ -162,6 +162,13 @@ const imageLayer = z.object({
     .number()
     .optional()
     .describe('straighten (geometry correction): rotate the image content within its box by this many DEGREES (positive = clockwise) with an automatic crop-to-fill zoom so no empty corners show; distinct from the layer rotation. 0/absent = none'),
+  portraitBlur: z
+    .object({
+      amount: z.number().describe('blur strength, 0 (none) … 1 (max)'),
+      mask: z.object({ data: z.string(), width: z.number().int().positive(), height: z.number().int().positive() }).describe('grayscale subject raster (white=subject/sharp, black=background/blurred) as a PNG data-URL (+ pixel size), stretched over the box'),
+    })
+    .optional()
+    .describe('portrait/background blur (bokeh): keeps the SUBJECT sharp and Gaussian-blurs the BACKGROUND behind it; usually generated in the editor from a background-removal cutout rather than authored'),
   ...baseLayerShape,
 });
 const gradientFill = z.object({ from: z.string(), to: z.string(), angle: z.number().optional() });
