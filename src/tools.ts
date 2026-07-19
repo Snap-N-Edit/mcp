@@ -92,6 +92,19 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     params: EMPTY_PARAMS,
     requiresMask: false,
   },
+  beautify: {
+    operation: 'beautify',
+    name: 'beautify',
+    description:
+      'Cosmetic portrait beauty retouch: detect the face and apply edge-preserving skin smoothing (eyes, hair, and edges stay sharp) plus subtle teeth-whiten and eye-brighten.',
+    params: {
+      amount: z
+        .enum(['0.3', '0.6', '0.9', '1'])
+        .optional()
+        .describe('How strong the retouch is (0..1). Defaults to "0.6" (a natural look).'),
+    },
+    requiresMask: false,
+  },
   'magic-eraser': {
     operation: 'magic-eraser',
     name: 'magic_eraser',
