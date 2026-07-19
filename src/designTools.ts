@@ -185,6 +185,15 @@ const imageLayer = z.object({
     .number()
     .optional()
     .describe('lens correction: barrel/pincushion radial distortion amount, +1 = max barrel (bulge), -1 = max pincushion, 0/absent = none. Non-affine, baked into the raster for the SVG/export path'),
+  liquify: z
+    .object({
+      cols: z.number().int().min(2),
+      rows: z.number().int().min(2),
+      dx: z.array(z.number()),
+      dy: z.array(z.number()),
+    })
+    .optional()
+    .describe('liquify/warp: a coarse displacement MESH {cols,rows,dx,dy} (dx/dy row-major, length cols*rows) of inverse-sample box-UV offsets the push/pull/bloat/pucker brushes paint; all-zero/absent = none. Non-affine, baked into a box raster for the SVG/export path (like perspective); usually painted in the editor rather than authored by hand'),
   ...baseLayerShape,
 });
 const gradientFill = z.object({ from: z.string(), to: z.string(), angle: z.number().optional() });
