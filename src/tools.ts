@@ -158,6 +158,19 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     },
     requiresMask: false,
   },
+  'replace-background': {
+    operation: 'replace-background',
+    name: 'replace_background',
+    description:
+      'Cut out the subject and composite it over a chosen background preset (white, black, studio grey, or a studio-blue/sunset/ocean/lavender gradient), baking a finished image with a feathered edge.',
+    params: {
+      background: z
+        .enum(['white', 'black', 'studio-grey', 'studio-blue', 'sunset', 'ocean', 'lavender'])
+        .optional()
+        .describe('Which background preset to composite the subject over. Defaults to "white".'),
+    },
+    requiresMask: false,
+  },
 };
 
 /**
