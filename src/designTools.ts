@@ -69,6 +69,24 @@ const crop = z.object({
   width: z.number().positive(),
   height: z.number().positive(),
 });
+const curvePoint = z.object({ x: z.number(), y: z.number() });
+const toneCurve = z.array(curvePoint);
+const levels = z.object({
+  inBlack: z.number(),
+  inWhite: z.number(),
+  gamma: z.number(),
+  outBlack: z.number(),
+  outWhite: z.number(),
+});
+const tone = z.object({
+  rgb: toneCurve.optional(),
+  red: toneCurve.optional(),
+  green: toneCurve.optional(),
+  blue: toneCurve.optional(),
+  levels: levels.optional(),
+});
+const gradientMapStop = z.object({ color: z.string(), position: z.number() });
+const gradientMap = z.object({ stops: z.array(gradientMapStop) });
 const frameFill = z.object({
   url: z.string(),
   width: z.number().positive(),
@@ -105,6 +123,8 @@ const imageLayer = z.object({
   width: z.number().positive().describe('natural pixel width'),
   height: z.number().positive().describe('natural pixel height'),
   adjustments: adjustments.optional(),
+  tone: tone.optional().describe('curves & levels: per-channel value LUT (composite + per-R/G/B curves of {x,y} points 0..1, plus composite levels)'),
+  gradientMap: gradientMap.optional().describe('gradient map: remaps luminance onto a multi-stop gradient {stops:[{color:CSS hex, position:0..1}, …]} (≥2 stops); the multi-stop generalization of duotone'),
   crop: crop.optional(),
   ...baseLayerShape,
 });
