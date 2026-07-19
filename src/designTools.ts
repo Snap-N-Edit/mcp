@@ -172,6 +172,19 @@ const imageLayer = z.object({
     })
     .optional()
     .describe('portrait/background blur (bokeh): keeps the SUBJECT sharp and Gaussian-blurs the BACKGROUND behind it; usually generated in the editor from a background-removal cutout rather than authored'),
+  perspective: z
+    .object({
+      tl: z.object({ dx: z.number(), dy: z.number() }),
+      tr: z.object({ dx: z.number(), dy: z.number() }),
+      br: z.object({ dx: z.number(), dy: z.number() }),
+      bl: z.object({ dx: z.number(), dy: z.number() }),
+    })
+    .optional()
+    .describe('perspective/keystone: a 4-corner homography warp — each corner offset {dx,dy} (fraction of box width/height) drags that corner of the image content; all-zero/absent = none. Non-affine, baked into a box raster for the SVG/export path'),
+  lens: z
+    .number()
+    .optional()
+    .describe('lens correction: barrel/pincushion radial distortion amount, +1 = max barrel (bulge), -1 = max pincushion, 0/absent = none. Non-affine, baked into the raster for the SVG/export path'),
   ...baseLayerShape,
 });
 const gradientFill = z.object({ from: z.string(), to: z.string(), angle: z.number().optional() });
