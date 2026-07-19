@@ -158,6 +158,10 @@ const imageLayer = z.object({
     .optional()
     .describe('manual retouch overlay — a transparent RGBA PNG data-URL (+ its pixel size) composited over the image before adjustments; usually painted in the editor (clone/heal/dodge-burn/red-eye) rather than authored'),
   crop: crop.optional(),
+  straighten: z
+    .number()
+    .optional()
+    .describe('straighten (geometry correction): rotate the image content within its box by this many DEGREES (positive = clockwise) with an automatic crop-to-fill zoom so no empty corners show; distinct from the layer rotation. 0/absent = none'),
   ...baseLayerShape,
 });
 const gradientFill = z.object({ from: z.string(), to: z.string(), angle: z.number().optional() });
