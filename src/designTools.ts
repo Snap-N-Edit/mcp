@@ -153,6 +153,10 @@ const imageLayer = z.object({
   tone: tone.optional().describe('curves & levels: per-channel value LUT (composite + per-R/G/B curves of {x,y} points 0..1, plus composite levels)'),
   gradientMap: gradientMap.optional().describe('gradient map: remaps luminance onto a multi-stop gradient {stops:[{color:CSS hex, position:0..1}, …]} (≥2 stops); the multi-stop generalization of duotone'),
   localAdjustments: z.array(localAdjustment).optional().describe('local/selective adjustments: a list of {region, adjustments} applied to a REGION (radial ellipse {cx,cy,rx,ry,feather} or graduated line {x1,y1,x2,y2}, all in 0..1 box-UV) rather than the whole image; composited on top in order'),
+  retouch: z
+    .object({ data: z.string(), width: z.number().int().positive(), height: z.number().int().positive(), enabled: z.boolean().optional() })
+    .optional()
+    .describe('manual retouch overlay — a transparent RGBA PNG data-URL (+ its pixel size) composited over the image before adjustments; usually painted in the editor (clone/heal/dodge-burn/red-eye) rather than authored'),
   crop: crop.optional(),
   ...baseLayerShape,
 });
