@@ -109,6 +109,8 @@ const tone = z.object({
 });
 const gradientMapStop = z.object({ color: z.string(), position: z.number() });
 const gradientMap = z.object({ stops: z.array(gradientMapStop) });
+const hslBand = z.object({ hue: z.number(), saturation: z.number(), luminance: z.number() });
+const hslVibrance = z.object({ bands: z.array(hslBand), vibrance: z.number() });
 const localAdjustRegion = z.discriminatedUnion('type', [
   z.object({ type: z.literal('radial'), cx: z.number(), cy: z.number(), rx: z.number(), ry: z.number(), feather: z.number() }),
   z.object({ type: z.literal('graduated'), x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() }),
@@ -152,6 +154,7 @@ const imageLayer = z.object({
   adjustments: adjustments.optional(),
   tone: tone.optional().describe('curves & levels: per-channel value LUT (composite + per-R/G/B curves of {x,y} points 0..1, plus composite levels)'),
   gradientMap: gradientMap.optional().describe('gradient map: remaps luminance onto a multi-stop gradient {stops:[{color:CSS hex, position:0..1}, …]} (≥2 stops); the multi-stop generalization of duotone'),
+  hslVibrance: hslVibrance.optional().describe('HSL-per-color + vibrance: {bands:[8×{hue,saturation,luminance}] index-aligned to red/orange/yellow/green/aqua/blue/purple/magenta, each field neutral 0 in ±1, plus vibrance:-1..1}; a per-pixel HSL transform baked into the source raster for rendering'),
   localAdjustments: z.array(localAdjustment).optional().describe('local/selective adjustments: a list of {region, adjustments} applied to a REGION (radial ellipse {cx,cy,rx,ry,feather} or graduated line {x1,y1,x2,y2}, all in 0..1 box-UV) rather than the whole image; composited on top in order'),
   retouch: z
     .object({ data: z.string(), width: z.number().int().positive(), height: z.number().int().positive(), enabled: z.boolean().optional() })
