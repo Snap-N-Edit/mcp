@@ -132,6 +132,19 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     },
     requiresMask: false,
   },
+  'replace-sky': {
+    operation: 'replace-sky',
+    name: 'replace_sky',
+    description:
+      'Replace the sky in a photo with a chosen preset sky (blue sky, sunset, dramatic clouds, golden hour, night, or overcast), blending the horizon softly.',
+    params: {
+      sky: z
+        .enum(['blue-sky', 'sunset', 'dramatic-clouds', 'golden-hour', 'night', 'overcast'])
+        .optional()
+        .describe('Which sky preset to composite in. Defaults to "blue-sky".'),
+    },
+    requiresMask: false,
+  },
 };
 
 /**
