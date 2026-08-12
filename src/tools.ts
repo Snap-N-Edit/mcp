@@ -184,6 +184,14 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     },
     requiresMask: false,
   },
+  'strip-metadata': {
+    operation: 'strip-metadata',
+    name: 'strip_metadata',
+    description:
+      'Strip provenance/metadata tags — C2PA Content Credentials, AI-generator XMP tags, and EXIF — from a PNG or JPEG so it is not flagged as AI-generated, without changing the visible pixels. Does NOT remove visible watermarks or robust invisible pixel watermarks (e.g. SynthID).',
+    params: EMPTY_PARAMS,
+    requiresMask: false,
+  },
 };
 
 /**
