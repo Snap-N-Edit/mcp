@@ -192,6 +192,19 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     params: EMPTY_PARAMS,
     requiresMask: false,
   },
+  'auto-remove-watermark': {
+    operation: 'auto-remove-watermark',
+    name: 'auto_remove_watermark',
+    description:
+      'Automatically detect a visible watermark, logo, or text overlay stamped on a photo — no mask or brushing needed — and erase it by content-aware inpainting. The automatic sibling of remove_watermark (which needs a hand-painted mask). Works best on semi-transparent or text watermarks; may miss very complex or opaque logos — fall back to magic_eraser / remove_watermark and brush the region for those.',
+    params: {
+      strength: z
+        .enum(['low', 'medium', 'high'])
+        .optional()
+        .describe('How aggressively to dilate (pad) the detected watermark region before inpainting. Defaults to "medium".'),
+    },
+    requiresMask: false,
+  },
 };
 
 /**
