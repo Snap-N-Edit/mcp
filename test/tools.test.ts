@@ -11,6 +11,36 @@ import {
 } from '@snapnedit/sdk';
 import { buildTools, TOOL_DESCRIPTORS, type BuiltTool } from '../src/tools.js';
 import { buildDesignTools } from '../src/designTools.js';
+import { buildStorageTools } from '../src/storageTools.js';
+
+/**
+ * The SAVED-DESTINATION half of a `SnapneditClient`. Every method throws by
+ * default, so a handler that reaches for one it has no business calling fails
+ * loudly; `overrides` supplies the one a given test is actually about.
+ */
+type DestinationMethods = Pick<
+  SnapneditClient,
+  | 'listDestinations'
+  | 'createDestination'
+  | 'updateDestination'
+  | 'deleteDestination'
+  | 'testDestination'
+  | 'presignDestinationUpload'
+>;
+
+function destinationStubs(overrides: Partial<DestinationMethods> = {}): DestinationMethods {
+  const unexpected = (name: string) => async (): Promise<never> => {
+    throw new Error(`stub: ${name}() should never be called by this handler`);
+  };
+  return {
+    listDestinations: overrides.listDestinations ?? unexpected('listDestinations'),
+    createDestination: overrides.createDestination ?? unexpected('createDestination'),
+    updateDestination: overrides.updateDestination ?? unexpected('updateDestination'),
+    deleteDestination: overrides.deleteDestination ?? unexpected('deleteDestination'),
+    testDestination: overrides.testDestination ?? unexpected('testDestination'),
+    presignDestinationUpload: overrides.presignDestinationUpload ?? unexpected('presignDestinationUpload'),
+  };
+}
 
 type RecordedRun = { operation: OperationId; input: Uint8Array | JobUrlInput; opts: RunOptions | undefined };
 
@@ -53,6 +83,7 @@ function stubSdk(
     renderDesign: async () => {
       throw new Error('stubSdk: renderDesign() should never be called by an image-op tool handler');
     },
+    ...destinationStubs(),
   };
   return { sdk, calls };
 }
@@ -98,6 +129,7 @@ function designStubSdk(
         renderCalls.push({ spec: input.spec, pages: input.pages, format: input.format });
         return new Uint8Array([1, 2, 3]);
       }),
+    ...destinationStubs(),
   };
   return { sdk, createdSpecs, renderCalls, pageCalls };
 }
@@ -494,6 +526,202 @@ describe('bring your own storage', () => {
 
     expect(result.content).toHaveLength(1);
     expect(result.content[0]?.type).toBe('image');
+  });
+
+  test('every image tool also advertises destination_id, optional', () => {
+    const { sdk } = stubSdk(async () => okResult);
+    for (const tool of buildTools(sdk)) {
+      const shape = tool.config.inputSchema;
+      expect(Object.keys(shape), `${tool.name} is missing destination_id`).toContain('destination_id');
+      expect(shape.destination_id?.safeParse(undefined).success).toBe(true);
+      expect(shape.destination_id?.safeParse('dst-1').success).toBe(true);
+      expect(shape.destination_id?.safeParse('').success).toBe(false);
+    }
+  });
+
+  test('destination_id becomes the saved-destination wire shape — only the id travels', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    await tool.handler({ image: b64([1]), destination_id: 'dst-1' });
+
+    expect(calls[0]?.opts?.destination).toEqual({ type: 'saved', id: 'dst-1' });
+  });
+
+  test('destination_id and destination_put_url are mutually exclusive, refused before any credit is spent', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ image: b64([1]), destination_id: 'dst-1', destination_put_url: putUrl });
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('a saved-destination delivery report carries bucket + key (a presigned one has neither)', async () => {
+    const delivery: JobDelivery = {
+      status: 'delivered',
+      attempts: 1,
+      statusCode: 200,
+      bucket: 'my-app-images',
+      key: 'snapnedit/2026/09/13/job-saved.png',
+    };
+    const { sdk } = stubSdk(async () => ({
+      downloaded: false,
+      jobId: 'job-saved',
+      download: { url: 'https://api.example.com/results/out.png', expiresAt: 'x' },
+      input: { kind: 'asset' },
+      destination: { type: 'saved', id: 'dst-1', name: 'Production' },
+      delivery,
+    }));
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ image: b64([1]), destination_id: 'dst-1' });
+
+    const [block] = result.content;
+    expect(JSON.parse(block?.type === 'text' ? block.text : '{}')).toEqual({
+      jobId: 'job-saved',
+      delivered: true,
+      delivery,
+      bucket: 'my-app-images',
+      key: 'snapnedit/2026/09/13/job-saved.png',
+      download: 'https://api.example.com/results/out.png',
+    });
+  });
+
+  test('deleteAfterDelivery: download comes back null instead of blowing up on a missing url', async () => {
+    const delivery: JobDelivery = {
+      status: 'delivered',
+      attempts: 1,
+      statusCode: 200,
+      bucket: 'my-app-images',
+      key: 'snapnedit/2026/09/13/job-gone.png',
+      localCopyDeleted: true,
+    };
+    const { sdk } = stubSdk(async () => ({
+      downloaded: false,
+      jobId: 'job-gone',
+      download: null,
+      input: { kind: 'asset' },
+      destination: { type: 'saved', id: 'dst-1', name: 'Production' },
+      delivery,
+    }));
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ image: b64([1]), destination_id: 'dst-1' });
+
+    expect(result.isError).toBeUndefined();
+    const [block] = result.content;
+    expect(JSON.parse(block?.type === 'text' ? block.text : '{}')).toMatchObject({
+      jobId: 'job-gone',
+      delivered: true,
+      download: null,
+    });
+  });
+});
+
+/**
+ * The SAVED STORAGE DESTINATION tools. What matters as much as what they do
+ * is what is ABSENT: no create/update/delete, because those take an access
+ * key and a secret, and an MCP tool's arguments end up in an agent
+ * transcript.
+ */
+describe('storage tools — list_storage_destinations / test_storage_destination', () => {
+  const row = {
+    id: 'dst-1',
+    name: 'Production',
+    provider: 'aws-s3' as const,
+    bucket: 'my-app-images',
+    region: 'us-east-1',
+    endpoint: null,
+    forcePathStyle: false,
+    keyPrefix: 'snapnedit/',
+    accessKeyIdLast4: 'MPLE',
+    isDefault: true,
+    deleteAfterDelivery: false,
+    lastTest: { status: 'ok' as const, at: '2026-09-13T00:00:00.000Z' },
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-13T00:00:00.000Z',
+  };
+
+  /** A client stub whose ONLY live methods are the storage ones under test. */
+  function storageStubSdk(overrides: Partial<DestinationMethods>): SnapneditClient {
+    const throwUnexpected = (name: string) => async (): Promise<never> => {
+      throw new Error(`storageStubSdk: ${name}() should never be called by a storage tool handler`);
+    };
+    return {
+      run: throwUnexpected('run'),
+      upload: throwUnexpected('upload'),
+      createJob: throwUnexpected('createJob'),
+      getJob: throwUnexpected('getJob'),
+      createDesign: throwUnexpected('createDesign'),
+      createDesignPages: throwUnexpected('createDesignPages'),
+      renderDesign: throwUnexpected('renderDesign'),
+      ...destinationStubs(overrides),
+    };
+  }
+
+  test('exposes exactly the two READ-ONLY tools — no create, update or delete', () => {
+    const names = buildStorageTools(storageStubSdk({})).map((tool) => tool.name);
+    expect(names).toEqual(['list_storage_destinations', 'test_storage_destination']);
+    for (const forbidden of ['create_storage_destination', 'update_storage_destination', 'delete_storage_destination']) {
+      expect(names).not.toContain(forbidden);
+    }
+  });
+
+  test('list_storage_destinations reports ids to use as destination_id, and no credential fragment', async () => {
+    const sdk = storageStubSdk({ listDestinations: async () => [row] });
+    const tool = toolByName(buildStorageTools(sdk), 'list_storage_destinations');
+
+    const result = await tool.handler({});
+
+    expect(result.isError).toBeUndefined();
+    const [block] = result.content;
+    const parsed: unknown = JSON.parse(block?.type === 'text' ? block.text : '[]');
+    expect(parsed).toEqual([
+      {
+        id: 'dst-1',
+        name: 'Production',
+        provider: 'aws-s3',
+        bucket: 'my-app-images',
+        keyPrefix: 'snapnedit/',
+        isDefault: true,
+        deleteAfterDelivery: false,
+      },
+    ]);
+    // Nothing about HOW the bucket is reached leaks into the transcript.
+    expect(block?.type === 'text' ? block.text : '').not.toContain('MPLE');
+    expect(block?.type === 'text' ? block.text : '').not.toContain('us-east-1');
+  });
+
+  test('test_storage_destination reports a FAILED probe as a normal (non-error) result', async () => {
+    const sdk = storageStubSdk({ testDestination: async () => ({ ok: false, latencyMs: 12, error: 'AccessDenied' }) });
+    const tool = toolByName(buildStorageTools(sdk), 'test_storage_destination');
+
+    const result = await tool.handler({ destination_id: 'dst-1' });
+
+    // The tool call worked; the bucket didn't. Those are different things.
+    expect(result.isError).toBeUndefined();
+    const [block] = result.content;
+    expect(JSON.parse(block?.type === 'text' ? block.text : '{}')).toEqual({
+      ok: false,
+      latencyMs: 12,
+      error: 'AccessDenied',
+    });
+  });
+
+  test('test_storage_destination requires an id, and maps an api error to an error result', async () => {
+    const missing = await toolByName(buildStorageTools(storageStubSdk({})), 'test_storage_destination').handler({});
+    expect(missing.isError).toBe(true);
+
+    const sdk = storageStubSdk({
+      testDestination: async () => {
+        throw new SnapneditApiError('not_found', 404, 'storage destination not found: dst-9');
+      },
+    });
+    const result = await toolByName(buildStorageTools(sdk), 'test_storage_destination').handler({ destination_id: 'dst-9' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.type === 'text' ? result.content[0].text : '').toContain('not_found');
   });
 });
 

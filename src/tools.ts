@@ -37,6 +37,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildDesignTools } from './designTools.js';
+import { buildStorageTools } from './storageTools.js';
 
 /**
  * One entry per `OperationId`, describing the MCP tool that exposes it.
@@ -255,6 +256,13 @@ const BYOS_INPUT_SHAPE: Readonly<Record<string, z.ZodTypeAny>> = {
     .describe(
       'Headers the presigned PUT signature requires, e.g. { "content-type": "image/png" }. Only content-type, cache-control, content-disposition and x-amz-* / x-goog-* / x-ms-* are accepted (16 max). Only valid together with `destination_put_url`.',
     ),
+  destination_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Id of a SAVED storage destination on the snapnedit account (call `list_storage_destinations` to see them). The server signs the upload itself, so no URL is needed — use this INSTEAD of `destination_put_url`, never both. If the account has a default destination, results go there even with neither argument.',
+    ),
 };
 
 /** Every tool's full MCP `inputSchema` shape: the input image (+ mask, if required), the bring-your-own-storage url args, plus the descriptor's own params. */
@@ -351,6 +359,7 @@ export function createToolHandler(
       input_url: rawInputUrl,
       destination_put_url: rawDestinationUrl,
       destination_headers: rawDestinationHeaders,
+      destination_id: rawDestinationId,
       ...params
     } = parsed.data;
     const image = typeof rawImage === 'string' ? rawImage : undefined;
@@ -367,10 +376,20 @@ export function createToolHandler(
     const mime = typeof rawMime === 'string' ? rawMime : undefined;
     const mask = typeof rawMask === 'string' ? rawMask : undefined;
     const destinationUrl = typeof rawDestinationUrl === 'string' ? rawDestinationUrl : undefined;
+    const destinationId = typeof rawDestinationId === 'string' ? rawDestinationId : undefined;
     const destinationHeaders = asHeaderRecord(rawDestinationHeaders);
     if (destinationUrl === undefined && destinationHeaders !== undefined) {
       return textResult(
         `invalid input for tool "${descriptor.name}": "destination_headers" only applies together with "destination_put_url"`,
+        true,
+      );
+    }
+    // The two destination forms are alternatives, not a merge: one is a url
+    // the CALLER signed, the other a bucket the SERVER signs for. Supplying
+    // both is a mistake worth naming rather than silently resolving.
+    if (destinationUrl !== undefined && destinationId !== undefined) {
+      return textResult(
+        `invalid input for tool "${descriptor.name}": give either "destination_put_url" or "destination_id", not both`,
         true,
       );
     }
@@ -392,6 +411,12 @@ export function createToolHandler(
           url: destinationUrl,
           ...(destinationHeaders !== undefined ? { headers: destinationHeaders } : {}),
         };
+      } else if (destinationId !== undefined) {
+        // A SAVED destination: only the id travels. The api checks it belongs
+        // to this key's account (a foreign id is a 404) and the worker signs
+        // the upload with the credentials it holds — none of which the agent
+        // ever sees.
+        opts.destination = { type: 'saved', id: destinationId };
       }
       const result = await sdk.run(descriptor.operation, input, opts);
       // Delivered to the caller's own bucket: there are no bytes to hand
@@ -403,7 +428,13 @@ export function createToolHandler(
             jobId: result.jobId,
             delivered: result.delivery?.status === 'delivered',
             delivery: result.delivery,
-            download: result.download.url,
+            // A saved destination reports WHERE it landed; a presigned PUT
+            // does not (the caller signed the url, so they already know).
+            ...(result.delivery?.bucket !== undefined ? { bucket: result.delivery.bucket } : {}),
+            ...(result.delivery?.key !== undefined ? { key: result.delivery.key } : {}),
+            // `null` when the destination has `deleteAfterDelivery` set: our
+            // copy is gone, the caller's bucket has the only one.
+            download: result.download?.url ?? null,
           }),
         );
       }
@@ -454,8 +485,10 @@ export function registerTools(
 ): void {
   // The per-operation AI tools, PLUS the design tools (create_design /
   // render_design) — the latter let an agent compose a design, not just edit
-  // an image (see `designTools.ts`).
-  for (const tool of [...buildTools(sdk, descriptors), ...buildDesignTools(sdk)]) {
+  // an image (see `designTools.ts`) — PLUS the read-only saved-storage tools
+  // (see `storageTools.ts`), which let an agent name a bucket for a result
+  // without ever seeing its credentials.
+  for (const tool of [...buildTools(sdk, descriptors), ...buildDesignTools(sdk), ...buildStorageTools(sdk)]) {
     server.registerTool(tool.name, tool.config, tool.handler);
   }
 }

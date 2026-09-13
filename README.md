@@ -80,6 +80,7 @@ images never have to pass through the agent's context at all:
 | `input_url` | An https URL (typically a short-lived presigned GET) the snapnedit **server** fetches the input from. Use it *instead of* `image` — exactly one of the two is required. |
 | `destination_put_url` | An https presigned PUT the snapnedit **server** uploads the finished image to, in your own S3/GCS/Azure bucket. |
 | `destination_headers` | Headers that PUT's signature requires, e.g. `{ "content-type": "image/png" }`. Only `content-type`, `cache-control`, `content-disposition` and `x-amz-*` / `x-goog-*` / `x-ms-*` are accepted (16 max). |
+| `destination_id` | Id of a **saved storage destination** on the snapnedit account (`list_storage_destinations`). The server signs the upload itself, so no URL is needed. Mutually exclusive with `destination_put_url` — giving both is an error. |
 
 The two design tools take no such arguments — `render_design` returns its bytes
 directly. Both transfers are server-to-bucket, so no browser and no CORS configuration
@@ -87,13 +88,42 @@ are involved, and neither URL is stored or echoed back. They are billed to — a
 the API key this server already runs with (`SNAPNEDIT_API_KEY`); the agent supplies no
 credential of its own.
 
-With `destination_put_url`, the tool returns a JSON delivery report
+With `destination_put_url` or `destination_id`, the tool returns a JSON delivery report
 (`{ jobId, delivered, delivery, download }`) instead of the image bytes, since the
-result is already in your bucket. If the delivery PUT fails the job still succeeds: the
-tool returns the image *and* the `delivery` record explaining why the bucket copy is
-missing. An `input_url` the server cannot fetch (blocked host, redirect, timeout,
-non-2xx, too large, not an image) fails the job with `input_fetch_failed`, credits
-refunded.
+result is already in your bucket. A saved destination adds `bucket` and `key` to that
+report — where the object actually landed. If the delivery PUT fails the job still
+succeeds: the tool returns the image *and* the `delivery` record explaining why the
+bucket copy is missing. An `input_url` the server cannot fetch (blocked host, redirect,
+timeout, non-2xx, too large, not an image) fails the job with `input_fetch_failed`,
+credits refunded.
+
+### Saved storage destinations
+
+A **storage destination** is one of your own S3-compatible buckets, saved once on the
+snapnedit account this server's API key belongs to. Two read-only tools cover them:
+
+| Tool | Extra input | What it does |
+| --- | --- | --- |
+| `list_storage_destinations` | — | Lists the account's saved destinations (`id`, `name`, `provider`, `bucket`, `keyPrefix`, `isDefault`, `deleteAfterDelivery`). Use an `id` as `destination_id` on any image tool. |
+| `test_storage_destination` | `destination_id` | Writes and deletes a probe object in the bucket. Returns `{ ok: true, latencyMs }` or `{ ok: false, latencyMs, error }` — a failed probe is a normal result, not a tool error. |
+
+If the account has a **default** destination, results are delivered to it even with no
+`destination_id` at all — in that case the tool still returns the image, plus the
+`delivery` record.
+
+**There is deliberately no `create` / `update` / `delete` tool for destinations.** Saving
+one means handing over an access key id and a secret access key, and anything passed to an
+MCP tool is written into the agent's transcript — logged, replayed, and usually sent on to
+a model provider. A long-lived cloud credential must not travel that path. Manage
+destinations in the [snapnedit dashboard](https://snapnedit.com/dashboard), or from a
+server you control with [`@snapnedit/sdk`](https://github.com/Snap-N-Edit/sdk)'s
+`createDestination()` / `updateDestination()` / `deleteDestination()`. Full setup:
+<https://snapnedit.com/docs/storage-destinations>.
+
+A destination with **delete-after-delivery** turned on removes the snapnedit copy once the
+bucket confirms the write; the report's `download` is then `null` and `delivery.key` names
+the only copy. A **cache hit** (the same image, operation and params as an earlier job)
+re-runs no model but is still delivered to your bucket, and costs no credits.
 
 | Tool | Extra input | What it does |
 | --- | --- | --- |
