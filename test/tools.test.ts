@@ -1,10 +1,18 @@
 import { describe, expect, test } from 'vitest';
 import { OPERATION_IDS, OPERATION_PARAMS, OPERATION_REQUIRES_MASK, type OperationId } from '@snapnedit/shared';
-import { SnapneditApiError, type DesignSpec, type RunOptions, type RunResult, type SnapneditClient } from '@snapnedit/sdk';
+import {
+  SnapneditApiError,
+  type DesignSpec,
+  type JobDelivery,
+  type JobUrlInput,
+  type RunOptions,
+  type RunResult,
+  type SnapneditClient,
+} from '@snapnedit/sdk';
 import { buildTools, TOOL_DESCRIPTORS, type BuiltTool } from '../src/tools.js';
 import { buildDesignTools } from '../src/designTools.js';
 
-type RecordedRun = { operation: OperationId; input: Uint8Array; opts: RunOptions | undefined };
+type RecordedRun = { operation: OperationId; input: Uint8Array | JobUrlInput; opts: RunOptions | undefined };
 
 /**
  * A scripted `SnapneditClient` stub — `run` is the only method any tool
@@ -14,14 +22,18 @@ type RecordedRun = { operation: OperationId; input: Uint8Array; opts: RunOptions
  * a handler passed through.
  */
 function stubSdk(
-  runImpl: (operation: OperationId, input: Uint8Array, opts?: RunOptions) => Promise<RunResult>,
+  runImpl: (operation: OperationId, input: Uint8Array | JobUrlInput, opts?: RunOptions) => Promise<RunResult>,
 ): { sdk: SnapneditClient; calls: RecordedRun[] } {
   const calls: RecordedRun[] = [];
   const sdk: SnapneditClient = {
     run: async (operation, input, opts) => {
-      const bytes = input instanceof Uint8Array ? input : new Uint8Array(await input.arrayBuffer());
-      calls.push({ operation, input: bytes, opts });
-      return runImpl(operation, bytes, opts);
+      // A bring-your-own-storage run passes `{ url }` straight through; a
+      // classic one passes bytes (normalized here so a Blob and a Uint8Array
+      // record identically).
+      const recorded: Uint8Array | JobUrlInput =
+        input instanceof Uint8Array ? input : 'url' in input ? input : new Uint8Array(await input.arrayBuffer());
+      calls.push({ operation, input: recorded, opts });
+      return runImpl(operation, recorded, opts);
     },
     upload: async () => {
       throw new Error('stubSdk: upload() should never be called directly by a tool handler');
@@ -110,8 +122,32 @@ function bytesOf(value: Uint8Array | Blob | undefined): number[] {
   return Array.from(value);
 }
 
+/** Narrows a recorded `run` input down to plain numbers, failing loudly on the `{ url }` form. */
+function inputBytesOf(value: Uint8Array | JobUrlInput | undefined): number[] {
+  if (!(value instanceof Uint8Array)) {
+    throw new Error(`expected byte input, got ${JSON.stringify(value)}`);
+  }
+  return Array.from(value);
+}
+
 const outputBytes = new Uint8Array([9, 8, 7, 6, 5]);
-const okResult: RunResult = { output: outputBytes, mime: 'image/png' };
+
+/** A `run()` result of the ordinary, downloaded kind — plus whatever bring-your-own-storage envelope a test wants on top. */
+function okResultWith(envelope: Partial<Pick<RunResult, 'delivery' | 'destination' | 'input'>> = {}): RunResult {
+  return {
+    downloaded: true,
+    output: outputBytes,
+    mime: 'image/png',
+    jobId: 'job-1',
+    download: { url: 'https://api.example.com/results/out.png', expiresAt: '2099-01-01T00:00:00.000Z' },
+    input: { kind: 'asset' },
+    destination: null,
+    delivery: null,
+    ...envelope,
+  };
+}
+
+const okResult: RunResult = okResultWith();
 
 describe('TOOL_DESCRIPTORS — exhaustive coverage over OPERATION_IDS', () => {
   test('every OperationId maps to exactly one descriptor, no op missing and no extra', () => {
@@ -185,7 +221,7 @@ describe('handler — no-param, no-mask op (remove_background)', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.operation).toBe('remove-background');
-    expect(Array.from(calls[0]?.input ?? [])).toEqual(inputBytes);
+    expect(inputBytesOf(calls[0]?.input)).toEqual(inputBytes);
     expect(calls[0]?.opts).toEqual({ params: {} });
 
     expect(result.isError).toBeUndefined();
@@ -311,6 +347,153 @@ describe('handler — error mapping', () => {
 
     expect(result.isError).toBe(true);
     expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * BRING YOUR OWN STORAGE — `input_url` instead of inline base64, and
+ * `destination_put_url` (+ `destination_headers`) so the finished image is
+ * PUT straight into the caller's bucket. Neither the input nor the output
+ * bytes pass through the agent in that mode.
+ */
+describe('bring your own storage', () => {
+  const putUrl = 'https://bucket.example.com/out.png?X-Amz-Signature=sig';
+
+  test('every image tool advertises input_url, destination_put_url and destination_headers, with image OPTIONAL', () => {
+    const { sdk } = stubSdk(async () => okResult);
+    for (const tool of buildTools(sdk)) {
+      const shape = tool.config.inputSchema;
+      expect(Object.keys(shape), `${tool.name} is missing a byos arg`).toEqual(
+        expect.arrayContaining(['image', 'input_url', 'destination_put_url', 'destination_headers']),
+      );
+      // `image` is optional in the SCHEMA precisely because `input_url` can
+      // stand in for it (the handler enforces exactly-one).
+      expect(shape.image?.safeParse(undefined).success, `${tool.name}.image should be optional`).toBe(true);
+      expect(shape.input_url?.safeParse(undefined).success).toBe(true);
+      expect(shape.input_url?.safeParse('https://bucket.example.com/in.png').success).toBe(true);
+      expect(shape.destination_headers?.safeParse({ 'content-type': 'image/png' }).success).toBe(true);
+      expect(shape.destination_headers?.safeParse({ 'content-type': 7 }).success).toBe(false);
+    }
+  });
+
+  test('input_url is forwarded to sdk.run as { url } — no bytes decoded, nothing uploaded', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ input_url: 'https://bucket.example.com/in.png' });
+
+    expect(result.isError).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.input).toEqual({ url: 'https://bucket.example.com/in.png' });
+    expect(calls[0]?.opts).toEqual({ params: {} });
+  });
+
+  test('destination_put_url + destination_headers become the SDK/api destination wire shape', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'upscale');
+
+    await tool.handler({
+      input_url: 'https://bucket.example.com/in.png',
+      destination_put_url: putUrl,
+      destination_headers: { 'content-type': 'image/png', 'x-amz-acl': 'private' },
+      factor: '4',
+    });
+
+    expect(calls[0]?.opts?.destination).toEqual({
+      type: 'presigned-put',
+      url: putUrl,
+      headers: { 'content-type': 'image/png', 'x-amz-acl': 'private' },
+    });
+    expect(calls[0]?.opts?.params).toEqual({ factor: '4' });
+  });
+
+  test('a destination with no headers omits the key entirely (rather than sending headers: undefined)', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    await tool.handler({ image: b64([1]), destination_put_url: putUrl });
+
+    expect(calls[0]?.opts?.destination).toEqual({ type: 'presigned-put', url: putUrl });
+  });
+
+  test('supplying BOTH image and input_url is rejected before sdk.run', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ image: b64([1]), input_url: 'https://bucket.example.com/in.png' });
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('supplying NEITHER image nor input_url is rejected before sdk.run', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ mime: 'image/png' });
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('destination_headers without destination_put_url is rejected (it would be silently dropped otherwise)', async () => {
+    const { sdk, calls } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ image: b64([1]), destination_headers: { 'content-type': 'image/png' } });
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('a delivered result returns the delivery report as JSON text, not image bytes', async () => {
+    const delivery: JobDelivery = { status: 'delivered', attempts: 1, statusCode: 200 };
+    const { sdk } = stubSdk(async () => ({
+      downloaded: false,
+      jobId: 'job-delivered',
+      download: { url: 'https://api.example.com/results/out.png', expiresAt: 'x' },
+      input: { kind: 'url' },
+      destination: { type: 'presigned-put' },
+      delivery,
+    }));
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ input_url: 'https://bucket.example.com/in.png', destination_put_url: putUrl });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toHaveLength(1);
+    const [block] = result.content;
+    expect(block?.type).toBe('text');
+    expect(JSON.parse(block?.type === 'text' ? block.text : '{}')).toEqual({
+      jobId: 'job-delivered',
+      delivered: true,
+      delivery,
+      download: 'https://api.example.com/results/out.png',
+    });
+  });
+
+  test('a FAILED delivery still returns the image (the job succeeded) plus the delivery record', async () => {
+    const delivery: JobDelivery = { status: 'failed', attempts: 3, statusCode: 403, error: 'destination returned 403' };
+    const { sdk } = stubSdk(async () => okResultWith({ delivery, destination: { type: 'presigned-put' } }));
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ image: b64([1]), destination_put_url: putUrl });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0]?.type).toBe('image');
+    const [, note] = result.content;
+    expect(JSON.parse(note?.type === 'text' ? note.text : '{}')).toEqual({ jobId: 'job-1', delivery });
+  });
+
+  test('an ordinary run (no destination) still returns just the image block — no empty delivery noise', async () => {
+    const { sdk } = stubSdk(async () => okResult);
+    const tool = toolByName(buildTools(sdk), 'remove_background');
+
+    const result = await tool.handler({ image: b64([1]) });
+
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]?.type).toBe('image');
   });
 });
 

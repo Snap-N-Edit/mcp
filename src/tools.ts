@@ -227,20 +227,59 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
  */
 export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = Object.values(TOOL_DESCRIPTOR_MAP);
 
-/** Every tool's full MCP `inputSchema` shape: the input image (+ mask, if required) plus the descriptor's own params. */
+/**
+ * BRING YOUR OWN STORAGE, shared across every image tool: instead of pushing
+ * base64 through the agent's context, the caller can name a url the SERVER
+ * fetches the input from and a presigned PUT the SERVER delivers the result
+ * to. Both are billed to (and require) the API key this server already runs
+ * with, so an agent never handles a credential of its own.
+ */
+const BYOS_INPUT_SHAPE: Readonly<Record<string, z.ZodTypeAny>> = {
+  input_url: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Alternative to `image`: an https URL (e.g. a short-lived presigned GET) the snapnedit SERVER fetches the input image from — the bytes never pass through this agent. Give exactly one of `image` or `input_url`. Requires the server to be configured with an API key (it is).',
+    ),
+  destination_put_url: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'An https presigned PUT URL the snapnedit SERVER uploads the finished image to (your own S3/GCS/Azure bucket). When given, the result is delivered there and this tool returns a JSON delivery report instead of the image bytes — nothing flows through this agent. Requires the server to be configured with an API key (it is).',
+    ),
+  destination_headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      'Headers the presigned PUT signature requires, e.g. { "content-type": "image/png" }. Only content-type, cache-control, content-disposition and x-amz-* / x-goog-* / x-ms-* are accepted (16 max). Only valid together with `destination_put_url`.',
+    ),
+};
+
+/** Every tool's full MCP `inputSchema` shape: the input image (+ mask, if required), the bring-your-own-storage url args, plus the descriptor's own params. */
 function toolInputShape(descriptor: ToolDescriptor): Record<string, z.ZodTypeAny> {
   const shape: Record<string, z.ZodTypeAny> = {
-    image: z.string().min(1).describe('Base64-encoded input image bytes (no "data:" URL prefix).'),
+    // Optional in the SCHEMA (an `input_url` can stand in for it) but not in
+    // practice: the handler rejects a call that supplies neither, and one
+    // that supplies both. A raw zod shape cannot express "exactly one of",
+    // so the prose says it and the handler enforces it.
+    image: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Base64-encoded input image bytes (no "data:" URL prefix). Give exactly one of `image` or `input_url`.'),
     mime: z
       .string()
       .optional()
-      .describe('MIME type of `image`, e.g. "image/png". Defaults to a generic binary type if omitted.'),
+      .describe('MIME type of `image`, e.g. "image/png". Defaults to a generic binary type if omitted. Ignored with `input_url` (the server sniffs the fetched bytes).'),
+    ...BYOS_INPUT_SHAPE,
   };
   if (descriptor.requiresMask) {
     shape.mask = z
       .string()
       .min(1)
-      .describe('Base64-encoded mask image bytes (no "data:" URL prefix) — required for this operation.');
+      .describe('Base64-encoded mask image bytes (no "data:" URL prefix) — required for this operation. Masks are always inline; there is no URL form.');
   }
   return { ...shape, ...descriptor.params };
 }
@@ -255,6 +294,21 @@ function decodeBase64(value: string): Uint8Array {
 
 function encodeBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64');
+}
+
+/**
+ * Narrows a validated-but-loosely-typed `destination_headers` arg to
+ * `Record<string, string>`. Zod already proved it is a string->string record
+ * (see `BYOS_INPUT_SHAPE`); this re-derives that fact for the type system
+ * without an `as` cast, the same no-blind-casts convention the rest of this
+ * handler follows. Returns `undefined` for an absent or empty record.
+ */
+function asHeaderRecord(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 /**
@@ -290,15 +344,39 @@ export function createToolHandler(
     // `image`/`mime`/`mask` are narrowed by hand with `typeof`, the same
     // no-blind-casts convention `packages/sdk/src/client.ts`'s
     // `asString`/`asRecord` helpers use for the same reason.
-    const { image: rawImage, mime: rawMime, mask: rawMask, ...params } = parsed.data;
-    if (typeof rawImage !== 'string') {
-      return textResult(`invalid input for tool "${descriptor.name}": "image" must be a base64 string`, true);
+    const {
+      image: rawImage,
+      mime: rawMime,
+      mask: rawMask,
+      input_url: rawInputUrl,
+      destination_put_url: rawDestinationUrl,
+      destination_headers: rawDestinationHeaders,
+      ...params
+    } = parsed.data;
+    const image = typeof rawImage === 'string' ? rawImage : undefined;
+    const inputUrl = typeof rawInputUrl === 'string' ? rawInputUrl : undefined;
+    // "Exactly one of" is a cross-field rule a raw zod shape cannot carry
+    // (see `toolInputShape`), so it is enforced here — before any credit is
+    // spent, and with a message that tells the agent which way to fix it.
+    if (image !== undefined && inputUrl !== undefined) {
+      return textResult(`invalid input for tool "${descriptor.name}": give either "image" or "input_url", not both`, true);
+    }
+    if (image === undefined && inputUrl === undefined) {
+      return textResult(`invalid input for tool "${descriptor.name}": one of "image" (base64) or "input_url" is required`, true);
     }
     const mime = typeof rawMime === 'string' ? rawMime : undefined;
     const mask = typeof rawMask === 'string' ? rawMask : undefined;
+    const destinationUrl = typeof rawDestinationUrl === 'string' ? rawDestinationUrl : undefined;
+    const destinationHeaders = asHeaderRecord(rawDestinationHeaders);
+    if (destinationUrl === undefined && destinationHeaders !== undefined) {
+      return textResult(
+        `invalid input for tool "${descriptor.name}": "destination_headers" only applies together with "destination_put_url"`,
+        true,
+      );
+    }
 
     try {
-      const inputBytes = decodeBase64(rawImage);
+      const input = inputUrl !== undefined ? { url: inputUrl } : decodeBase64(image ?? '');
       const opts: RunOptions = { params };
       if (mime !== undefined) {
         opts.mime = mime;
@@ -306,10 +384,38 @@ export function createToolHandler(
       if (mask !== undefined) {
         opts.mask = decodeBase64(mask);
       }
-      const result = await sdk.run(descriptor.operation, inputBytes, opts);
-      return {
-        content: [{ type: 'image', data: encodeBase64(result.output), mimeType: result.mime }],
-      };
+      if (destinationUrl !== undefined) {
+        // The SDK takes the wire shape verbatim; the api validates the url
+        // (https, public host) and the header allowlist for real.
+        opts.destination = {
+          type: 'presigned-put',
+          url: destinationUrl,
+          ...(destinationHeaders !== undefined ? { headers: destinationHeaders } : {}),
+        };
+      }
+      const result = await sdk.run(descriptor.operation, input, opts);
+      // Delivered to the caller's own bucket: there are no bytes to hand
+      // back (and pulling them through the agent's context would defeat the
+      // point), so the tool reports the delivery outcome instead.
+      if (!result.downloaded) {
+        return textResult(
+          JSON.stringify({
+            jobId: result.jobId,
+            delivered: result.delivery?.status === 'delivered',
+            delivery: result.delivery,
+            download: result.download.url,
+          }),
+        );
+      }
+      const image64 = encodeBase64(result.output);
+      const content: CallToolResult['content'] = [{ type: 'image', data: image64, mimeType: result.mime }];
+      // A destination whose delivery FAILED still returns the image (the job
+      // succeeded), plus the failure so the agent can say why the bucket copy
+      // is missing.
+      if (result.delivery) {
+        content.push({ type: 'text', text: JSON.stringify({ jobId: result.jobId, delivery: result.delivery }) });
+      }
+      return { content };
     } catch (err) {
       if (err instanceof SnapneditApiError) {
         return textResult(`snapnedit api error (${err.code}, status ${err.status}): ${err.message}`, true);

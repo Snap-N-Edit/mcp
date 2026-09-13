@@ -72,6 +72,29 @@ Every image tool takes `image` (base64-encoded bytes, no `data:` prefix) and an 
 MCP image content block. Errors from the API (bad input, insufficient credits, a failed
 job) come back as an error result, not a crash.
 
+Every image tool also accepts three **bring your own storage** arguments, so large
+images never have to pass through the agent's context at all:
+
+| Argument | Meaning |
+| --- | --- |
+| `input_url` | An https URL (typically a short-lived presigned GET) the snapnedit **server** fetches the input from. Use it *instead of* `image` — exactly one of the two is required. |
+| `destination_put_url` | An https presigned PUT the snapnedit **server** uploads the finished image to, in your own S3/GCS/Azure bucket. |
+| `destination_headers` | Headers that PUT's signature requires, e.g. `{ "content-type": "image/png" }`. Only `content-type`, `cache-control`, `content-disposition` and `x-amz-*` / `x-goog-*` / `x-ms-*` are accepted (16 max). |
+
+The two design tools take no such arguments — `render_design` returns its bytes
+directly. Both transfers are server-to-bucket, so no browser and no CORS configuration
+are involved, and neither URL is stored or echoed back. They are billed to — and require —
+the API key this server already runs with (`SNAPNEDIT_API_KEY`); the agent supplies no
+credential of its own.
+
+With `destination_put_url`, the tool returns a JSON delivery report
+(`{ jobId, delivered, delivery, download }`) instead of the image bytes, since the
+result is already in your bucket. If the delivery PUT fails the job still succeeds: the
+tool returns the image *and* the `delivery` record explaining why the bucket copy is
+missing. An `input_url` the server cannot fetch (blocked host, redirect, timeout,
+non-2xx, too large, not an image) fails the job with `input_fetch_failed`, credits
+refunded.
+
 | Tool | Extra input | What it does |
 | --- | --- | --- |
 | `remove_background` | — | Removes the background, producing a transparent-background PNG. |
