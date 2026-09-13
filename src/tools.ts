@@ -38,6 +38,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildDesignTools } from './designTools.js';
 import { buildStorageTools } from './storageTools.js';
+import { buildUsageTools } from './usageTools.js';
 
 /**
  * One entry per `OperationId`, describing the MCP tool that exposes it.
@@ -487,8 +488,9 @@ export function registerTools(
   // render_design) — the latter let an agent compose a design, not just edit
   // an image (see `designTools.ts`) — PLUS the read-only saved-storage tools
   // (see `storageTools.ts`), which let an agent name a bucket for a result
-  // without ever seeing its credentials.
-  for (const tool of [...buildTools(sdk, descriptors), ...buildDesignTools(sdk), ...buildStorageTools(sdk)]) {
+  // without ever seeing its credentials, PLUS the read-only usage tool (see
+  // `usageTools.ts`), so an agent can answer what its own work cost.
+  for (const tool of [...buildTools(sdk, descriptors), ...buildDesignTools(sdk), ...buildStorageTools(sdk), ...buildUsageTools(sdk)]) {
     server.registerTool(tool.name, tool.config, tool.handler);
   }
 }

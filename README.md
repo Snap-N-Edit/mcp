@@ -146,9 +146,34 @@ re-runs no model but is still delivered to your bucket, and costs no credits.
 | `resize_image` | `width`, `height` (1..8192; at least one), `fit`: `inside` \| `cover` \| `fill`, `format`: `png` \| `jpeg` \| `webp`, `quality`: 1..100 | Resizes to exact dimensions and re-encodes. Free (0 credits) — plain geometry, no model runs. |
 | `create_design` | a design spec | Compiles a canvas + text/image/shape/element/frame layers into an editor document (returned as JSON). |
 | `render_design` | a design spec, or `pages`; `format`: `png` \| `jpeg` \| `pdf` | Renders a design straight to an image server-side; `pages` renders a multi-page PDF. |
+| `get_usage` | `from`, `to`, `group_by`, `source`, `operation`, `key_id`, `origin` | Reads the account's usage — see [Usage](#usage) below. Read-only. |
 
 Which operations a given deployment actually serves is up to that deployment — some may
 be disabled, in which case the tool call returns an API error.
+
+### Usage
+
+`get_usage` answers "what has this account run, and what did it cost" — the same numbers
+as the [usage dashboard](https://snapnedit.com/dashboard/usage), for whatever range and
+grouping the agent asks for. Every argument is optional; with none, it reports the last
+30 days bucketed by day.
+
+| Argument | Meaning |
+| --- | --- |
+| `from`, `to` | Inclusive `YYYY-MM-DD` bounds. The range may not exceed 366 days. |
+| `group_by` | `day` (default), `key`, `origin`, `operation` or `source` — how the `series` is bucketed. |
+| `source` | `api` (a secret key), `embed` (an embedded editor session) or `web` (the website, which is free). |
+| `operation`, `key_id`, `origin` | Narrow **what** is counted before it is bucketed. `origin` is a site origin or `native:<app id>`. |
+
+The result is `{ range, groupBy, totals, series, keys }`. `totals` and every `series` row
+carry `jobs`, `credits`, `cacheHits`, `free`, `failed`, `delivered`, `deliveryFailed` and
+`sessions` (plus `activeSessions` on `totals`). `keys` is trimmed on purpose to
+`{ id, name, usedToday, dailyCreditLimit }` — enough to spot a key about to hit its daily
+cap, with no other account detail entering the transcript.
+
+> How many credits did I spend on upscaling last week, and is any key close to its cap?
+
+Full reference: <https://snapnedit.com/docs/usage>.
 
 ## Example prompt
 

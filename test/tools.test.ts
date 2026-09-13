@@ -12,6 +12,7 @@ import {
 import { buildTools, TOOL_DESCRIPTORS, type BuiltTool } from '../src/tools.js';
 import { buildDesignTools } from '../src/designTools.js';
 import { buildStorageTools } from '../src/storageTools.js';
+import { buildUsageTools } from '../src/usageTools.js';
 
 /**
  * The SAVED-DESTINATION half of a `SnapneditClient`. Every method throws by
@@ -85,6 +86,9 @@ function stubSdk(
     renderDesign: async () => {
       throw new Error('stubSdk: renderDesign() should never be called by an image-op tool handler');
     },
+    getUsage: async () => {
+      throw new Error('stubSdk: getUsage() should never be called by an image-op tool handler');
+    },
     ...destinationStubs(),
   };
   return { sdk, calls };
@@ -131,6 +135,7 @@ function designStubSdk(
         renderCalls.push({ spec: input.spec, pages: input.pages, format: input.format });
         return new Uint8Array([1, 2, 3]);
       }),
+    getUsage: throwImageOp('getUsage'),
     ...destinationStubs(),
   };
   return { sdk, createdSpecs, renderCalls, pageCalls };
@@ -177,6 +182,9 @@ function okResultWith(envelope: Partial<Pick<RunResult, 'delivery' | 'destinatio
     input: { kind: 'asset' },
     destination: null,
     delivery: null,
+    creditCost: 0,
+    cached: false,
+    deliveryOnly: false,
     ...envelope,
   };
 }
@@ -489,6 +497,9 @@ describe('bring your own storage', () => {
       input: { kind: 'url' },
       destination: { type: 'presigned-put' },
       delivery,
+      creditCost: 0,
+      cached: false,
+      deliveryOnly: false,
     }));
     const tool = toolByName(buildTools(sdk), 'remove_background');
 
@@ -575,6 +586,9 @@ describe('bring your own storage', () => {
       input: { kind: 'asset' },
       destination: { type: 'saved', id: 'dst-1', name: 'Production' },
       delivery,
+      creditCost: 0,
+      cached: false,
+      deliveryOnly: false,
     }));
     const tool = toolByName(buildTools(sdk), 'remove_background');
 
@@ -607,6 +621,9 @@ describe('bring your own storage', () => {
       input: { kind: 'asset' },
       destination: { type: 'saved', id: 'dst-1', name: 'Production' },
       delivery,
+      creditCost: 0,
+      cached: false,
+      deliveryOnly: false,
     }));
     const tool = toolByName(buildTools(sdk), 'remove_background');
 
@@ -659,6 +676,7 @@ describe('storage tools — list_storage_destinations / test_storage_destination
       createDesign: throwUnexpected('createDesign'),
       createDesignPages: throwUnexpected('createDesignPages'),
       renderDesign: throwUnexpected('renderDesign'),
+      getUsage: throwUnexpected('getUsage'),
       ...destinationStubs(overrides),
     };
   }
@@ -843,5 +861,130 @@ describe('design tools — create_design / render_design', () => {
     expect(result.isError).toBeUndefined();
     expect(createdSpecs).toHaveLength(1);
     expect(createdSpecs[0]?.layers?.map((l) => l.type)).toEqual(['frame', 'image', 'text']);
+  });
+});
+
+/**
+ * The USAGE tool. What matters here beyond "it forwards the filters" is what
+ * it does NOT put in the transcript: the `keys` roster is trimmed to id, name
+ * and the two cap numbers.
+ */
+describe('usage tool — get_usage', () => {
+  const report = {
+    range: { from: '2026-08-15', to: '2026-09-13' },
+    groupBy: 'day' as const,
+    totals: {
+      jobs: 12,
+      credits: 30,
+      cacheHits: 4,
+      free: 2,
+      failed: 1,
+      delivered: 6,
+      deliveryFailed: 0,
+      sessions: 3,
+      activeSessions: 1,
+    },
+    series: [
+      { key: '2026-09-13', label: 'Sep 13', jobs: 7, credits: 18, cacheHits: 3, free: 2, failed: 1, delivered: 4, deliveryFailed: 0, sessions: 2 },
+    ],
+    keys: [
+      { id: 'key-2', name: 'Site widget', kind: 'publishable' as const, dailyCreditLimit: 50, usedToday: 45 },
+    ],
+  };
+
+  function usageStubSdk(getUsage: SnapneditClient['getUsage']): SnapneditClient {
+    const throwUnexpected = (name: string) => async (): Promise<never> => {
+      throw new Error(`usageStubSdk: ${name}() should never be called by the usage tool handler`);
+    };
+    return {
+      run: throwUnexpected('run'),
+      upload: throwUnexpected('upload'),
+      createJob: throwUnexpected('createJob'),
+      getJob: throwUnexpected('getJob'),
+      createDesign: throwUnexpected('createDesign'),
+      createDesignPages: throwUnexpected('createDesignPages'),
+      renderDesign: throwUnexpected('renderDesign'),
+      getUsage,
+      ...destinationStubs(),
+    };
+  }
+
+  test('exposes exactly one READ-ONLY tool', () => {
+    expect(buildUsageTools(usageStubSdk(async () => report)).map((tool) => tool.name)).toEqual(['get_usage']);
+  });
+
+  test('no arguments means no filters at all — the api decides the default range', async () => {
+    const calls: unknown[] = [];
+    const sdk = usageStubSdk(async (query) => {
+      calls.push(query);
+      return report;
+    });
+    const result = await toolByName(buildUsageTools(sdk), 'get_usage').handler({});
+    expect(calls).toEqual([{}]);
+    expect(result.isError).toBeUndefined();
+  });
+
+  test('translates every snake_case argument into the SDK\'s camelCase query', async () => {
+    const calls: unknown[] = [];
+    const sdk = usageStubSdk(async (query) => {
+      calls.push(query);
+      return report;
+    });
+    await toolByName(buildUsageTools(sdk), 'get_usage').handler({
+      from: '2026-09-01',
+      to: '2026-09-13',
+      group_by: 'origin',
+      source: 'embed',
+      operation: 'upscale',
+      key_id: 'key-2',
+      origin: 'native:com.acme.photos',
+    });
+    expect(calls).toEqual([
+      {
+        from: '2026-09-01',
+        to: '2026-09-13',
+        groupBy: 'origin',
+        source: 'embed',
+        operation: 'upscale',
+        keyId: 'key-2',
+        origin: 'native:com.acme.photos',
+      },
+    ]);
+  });
+
+  test('returns the report, with the key roster trimmed to id/name/usedToday/dailyCreditLimit', async () => {
+    const sdk = usageStubSdk(async () => report);
+    const result = await toolByName(buildUsageTools(sdk), 'get_usage').handler({});
+    const [block] = result.content;
+    const parsed = JSON.parse(block?.type === 'text' ? block.text : '{}') as {
+      totals: { credits: number };
+      series: unknown[];
+      keys: Record<string, unknown>[];
+    };
+    expect(parsed.totals.credits).toBe(30);
+    expect(parsed.series).toHaveLength(1);
+    expect(parsed.keys).toEqual([{ id: 'key-2', name: 'Site widget', usedToday: 45, dailyCreditLimit: 50 }]);
+    // The key's KIND is deliberately not in the transcript.
+    expect(Object.keys(parsed.keys[0] ?? {})).not.toContain('kind');
+  });
+
+  test('a malformed date is refused before any api call', async () => {
+    const sdk = usageStubSdk(async () => {
+      throw new Error('get_usage should not have called the api with a bad date');
+    });
+    const result = await toolByName(buildUsageTools(sdk), 'get_usage').handler({ from: 'last tuesday' });
+    expect(result.isError).toBe(true);
+    const [block] = result.content;
+    expect(block?.type === 'text' ? block.text : '').toContain('invalid input for tool "get_usage"');
+  });
+
+  test('an api error is surfaced as a typed, non-throwing MCP error result', async () => {
+    const sdk = usageStubSdk(async () => {
+      throw new SnapneditApiError('invalid_input', 400, 'range must not exceed 366 days');
+    });
+    const result = await toolByName(buildUsageTools(sdk), 'get_usage').handler({ from: '2020-01-01', to: '2026-09-13' });
+    expect(result.isError).toBe(true);
+    const [block] = result.content;
+    expect(block?.type === 'text' ? block.text : '').toContain('invalid_input');
   });
 });
