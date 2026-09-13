@@ -90,6 +90,7 @@ job) come back as an error result, not a crash.
 | `replace_background` | `background`: `white` \| `black` \| `studio-grey` \| `studio-blue` \| `sunset` \| `ocean` \| `lavender` | Cuts out the subject and composites it over a background preset. |
 | `strip_metadata` | — | Strips C2PA Content Credentials, AI-generator XMP tags and EXIF without changing pixels. Does not remove visible or invisible pixel watermarks. |
 | `auto_remove_watermark` | `strength`: `low` \| `medium` \| `high` | Detects a visible watermark automatically (no mask) and inpaints it away. |
+| `resize_image` | `width`, `height` (1..8192; at least one), `fit`: `inside` \| `cover` \| `fill`, `format`: `png` \| `jpeg` \| `webp`, `quality`: 1..100 | Resizes to exact dimensions and re-encodes. Free (0 credits) — plain geometry, no model runs. |
 | `create_design` | a design spec | Compiles a canvas + text/image/shape/element/frame layers into an editor document (returned as JSON). |
 | `render_design` | a design spec, or `pages`; `format`: `png` \| `jpeg` \| `pdf` | Renders a design straight to an image server-side; `pages` renders a multi-page PDF. |
 

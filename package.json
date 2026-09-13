@@ -49,9 +49,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@snapnedit/sdk": "*",
+    "@snapnedit/shared": "*",
     "zod": "^4.4.3"
-  },
-  "devDependencies": {
-    "@snapnedit/shared": "*"
   }
 }

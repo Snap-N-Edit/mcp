@@ -9,19 +9,29 @@
  * snapnedit api purely over `@snapnedit/sdk`, the same way any third-party
  * MCP client would, and has no business importing api-internal metadata.
  *
- * `OperationId` is imported as a TYPE only — mirroring `@snapnedit/sdk`'s
- * own type-only coupling to `@snapnedit/shared` (see `packages/sdk/src/
- * client.ts`'s module doc comment): this package's only runtime dependency
- * on the api's operation set is `@snapnedit/sdk` itself, never `@snapnedit/
- * shared`'s runtime barrel. `TOOL_DESCRIPTOR_MAP` below is typed
- * `Record<OperationId, _>`, so adding a new id to `@snapnedit/shared`'s
- * `OPERATION_IDS` without adding an entry here is a compile error — the
- * same exhaustiveness trick `apps/api/src/catalog.ts`'s `operationCatalog`
- * uses (including redundantly repeating the key as an `operation` field
- * inside each entry, then deriving the public array via `Object.values`,
- * exactly as that file's `allowedUploadMimes` does).
+ * What each tool is CALLED and what it says about itself stays hand-written
+ * here (that copy is genuinely MCP's own product surface). What each tool
+ * ACCEPTS no longer is: `params` is derived from `@snapnedit/shared`'s
+ * `OPERATION_PARAMS` — the same zod schemas the engine parses with and
+ * `POST /jobs` validates against — and `requiresMask` from
+ * `OPERATION_REQUIRES_MASK`. A hand-copied enum here could (and did
+ * elsewhere) advertise a default the server doesn't honor; now an agent's
+ * tool schema and the server's validator cannot disagree. Only the
+ * per-param `.describe()` prose is layered on top, by key.
+ *
+ * That makes `@snapnedit/shared` a RUNTIME dependency of this package rather
+ * than the type-only one it used to be — a deliberate trade: the alternative
+ * is keeping sixteen enum copies in sync by hand.
+ *
+ * `TOOL_DESCRIPTOR_MAP` below is typed `Record<OperationId, _>`, so adding a
+ * new id to `@snapnedit/shared`'s `OPERATION_IDS` without adding an entry
+ * here is a compile error — the same exhaustiveness trick
+ * `apps/api/src/catalog.ts`'s `operationCatalog` uses (including redundantly
+ * repeating the key as an `operation` field inside each entry, then deriving
+ * the public array via `Object.values`, exactly as that file's
+ * `allowedUploadMimes` does).
  */
-import type { OperationId } from '@snapnedit/shared';
+import { OPERATION_PARAMS, OPERATION_REQUIRES_MASK, type OperationId } from '@snapnedit/shared';
 import { SnapneditApiError, type RunOptions, type SnapneditClient } from '@snapnedit/sdk';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -44,7 +54,29 @@ export interface ToolDescriptor {
   readonly requiresMask: boolean;
 }
 
-const EMPTY_PARAMS: Readonly<Record<string, z.ZodTypeAny>> = {};
+/**
+ * The MCP raw shape for `operation`'s params: every key of its
+ * `OPERATION_PARAMS` schema, verbatim (enums, defaults and coercions
+ * included), with this package's own agent-facing prose attached per key via
+ * `.describe()`. A key with no prose is passed through unchanged.
+ *
+ * Cross-field rules (e.g. `resize-image`'s "at least one of width/height")
+ * live on the zod OBJECT, not on any single key, so they cannot ride along
+ * in a raw shape — the descriptions below spell them out instead, and the
+ * api enforces them for real.
+ */
+function paramsShapeFor(
+  operation: OperationId,
+  descriptions: Readonly<Record<string, string>> = {},
+): Readonly<Record<string, z.ZodTypeAny>> {
+  const shape = OPERATION_PARAMS[operation].shape as Readonly<Record<string, z.ZodTypeAny>>;
+  return Object.fromEntries(
+    Object.entries(shape).map(([key, schema]) => {
+      const description = descriptions[key];
+      return [key, description === undefined ? schema : schema.describe(description)];
+    }),
+  );
+}
 
 /** `Record<OperationId, _>` — see the module doc comment above for why this shape (not a plain array literal) is the exhaustiveness guard. */
 const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
@@ -52,158 +84,137 @@ const TOOL_DESCRIPTOR_MAP: Record<OperationId, ToolDescriptor> = {
     operation: 'remove-background',
     name: 'remove_background',
     description: 'Automatically remove the background from a photo, producing a transparent-background PNG.',
-    params: EMPTY_PARAMS,
-    requiresMask: false,
+    params: paramsShapeFor('remove-background'),
+    requiresMask: OPERATION_REQUIRES_MASK['remove-background'],
   },
   upscale: {
     operation: 'upscale',
     name: 'upscale',
     description: 'Increase an image’s resolution using AI upscaling while preserving detail and texture.',
-    params: { factor: z.enum(['2', '4']).optional().describe('Upscale factor. Defaults to "2".') },
-    requiresMask: false,
+    params: paramsShapeFor('upscale', { factor: 'Upscale factor. Defaults to "2".' }),
+    requiresMask: OPERATION_REQUIRES_MASK['upscale'],
   },
   unblur: {
     operation: 'unblur',
     name: 'unblur',
     description: 'Sharpen a blurry or out-of-focus photo and recover lost detail.',
-    params: EMPTY_PARAMS,
-    requiresMask: false,
+    params: paramsShapeFor('unblur'),
+    requiresMask: OPERATION_REQUIRES_MASK['unblur'],
   },
   colorize: {
     operation: 'colorize',
     name: 'colorize',
     description: 'Colorize a black-and-white photo with realistic, AI-generated color.',
-    params: EMPTY_PARAMS,
-    requiresMask: false,
+    params: paramsShapeFor('colorize'),
+    requiresMask: OPERATION_REQUIRES_MASK['colorize'],
   },
   'style-transfer': {
     operation: 'style-transfer',
     name: 'style_transfer',
     description: 'Restyle a photo with a painterly art filter (vivid, pastel, mosaic, or storm).',
-    params: {
-      style: z.enum(['vivid', 'pastel', 'mosaic', 'storm']).optional().describe('Target art filter. Defaults to "vivid".'),
-    },
-    requiresMask: false,
+    params: paramsShapeFor('style-transfer', { style: 'Target art filter. Defaults to "vivid".' }),
+    requiresMask: OPERATION_REQUIRES_MASK['style-transfer'],
   },
   retouch: {
     operation: 'retouch',
     name: 'retouch',
     description: 'Smooth skin, remove blemishes, and enhance a portrait automatically.',
-    params: EMPTY_PARAMS,
-    requiresMask: false,
+    params: paramsShapeFor('retouch'),
+    requiresMask: OPERATION_REQUIRES_MASK['retouch'],
   },
   beautify: {
     operation: 'beautify',
     name: 'beautify',
     description:
       'Cosmetic portrait beauty retouch: detect the face and apply edge-preserving skin smoothing (eyes, hair, and edges stay sharp) plus subtle teeth-whiten and eye-brighten.',
-    params: {
-      amount: z
-        .enum(['0.3', '0.6', '0.9', '1'])
-        .optional()
-        .describe('How strong the retouch is (0..1). Defaults to "0.6" (a natural look).'),
-    },
-    requiresMask: false,
+    params: paramsShapeFor('beautify', { amount: 'How strong the retouch is (0..1). Defaults to "0.6" (a natural look).' }),
+    requiresMask: OPERATION_REQUIRES_MASK['beautify'],
   },
   'magic-eraser': {
     operation: 'magic-eraser',
     name: 'magic_eraser',
     description: 'Erase the masked region of a photo (an unwanted object, person, or watermark) with content-aware AI fill.',
-    params: EMPTY_PARAMS,
-    requiresMask: true,
+    params: paramsShapeFor('magic-eraser'),
+    requiresMask: OPERATION_REQUIRES_MASK['magic-eraser'],
   },
   'generative-fill': {
     operation: 'generative-fill',
     name: 'generative_fill',
     description: 'Generate new content inside the masked region of a photo, guided by a text prompt.',
-    params: {
-      prompt: z.string().min(1).describe('Text prompt describing what to generate inside the masked region.'),
-      mode: z
-        .enum(['fast', 'quality'])
-        .optional()
-        .describe('Speed/quality: "quality" (default, ~25s, faithful to the prompt) or "fast" (~7s, weaker adherence).'),
-    },
-    requiresMask: true,
+    params: paramsShapeFor('generative-fill', {
+      prompt: 'Text prompt describing what to generate inside the masked region.',
+      mode: 'Speed/quality: "quality" (default, ~25s, faithful to the prompt) or "fast" (~7s, weaker adherence).',
+    }),
+    requiresMask: OPERATION_REQUIRES_MASK['generative-fill'],
   },
   'remove-watermark': {
     operation: 'remove-watermark',
     name: 'remove_watermark',
     description: 'Erase the masked watermark, logo, or text overlay from a photo with content-aware AI inpainting.',
-    params: EMPTY_PARAMS,
-    requiresMask: true,
+    params: paramsShapeFor('remove-watermark'),
+    requiresMask: OPERATION_REQUIRES_MASK['remove-watermark'],
   },
   'ai-denoise': {
     operation: 'ai-denoise',
     name: 'ai_denoise',
     description:
       'Remove sensor grain and noise from a photo with a learned denoiser that preserves edges and fine detail.',
-    params: {
-      strength: z
-        .enum(['0.25', '0.5', '0.75', '1'])
-        .optional()
-        .describe('How strongly to blend the denoised result over the original. Defaults to "1" (full).'),
-    },
-    requiresMask: false,
+    params: paramsShapeFor('ai-denoise', { strength: 'How strongly to blend the denoised result over the original. Defaults to "1" (full).' }),
+    requiresMask: OPERATION_REQUIRES_MASK['ai-denoise'],
   },
   'replace-sky': {
     operation: 'replace-sky',
     name: 'replace_sky',
     description:
       'Replace the sky in a photo with a chosen preset sky (blue sky, sunset, dramatic clouds, golden hour, night, or overcast), blending the horizon softly.',
-    params: {
-      sky: z
-        .enum(['blue-sky', 'sunset', 'dramatic-clouds', 'golden-hour', 'night', 'overcast'])
-        .optional()
-        .describe('Which sky preset to composite in. Defaults to "blue-sky".'),
-    },
-    requiresMask: false,
+    params: paramsShapeFor('replace-sky', { sky: 'Which sky preset to composite in. Defaults to "blue-sky".' }),
+    requiresMask: OPERATION_REQUIRES_MASK['replace-sky'],
   },
   relight: {
     operation: 'relight',
     name: 'relight',
     description:
       'Re-light a portrait or scene from a chosen light direction (left, right, front, top, or backlit), baking a relit image.',
-    params: {
-      direction: z
-        .enum(['left', 'right', 'front', 'top', 'backlit'])
-        .optional()
-        .describe('Where the key light comes from. Defaults to "front".'),
-    },
-    requiresMask: false,
+    params: paramsShapeFor('relight', { direction: 'Where the key light comes from. Defaults to "front".' }),
+    requiresMask: OPERATION_REQUIRES_MASK['relight'],
   },
   'replace-background': {
     operation: 'replace-background',
     name: 'replace_background',
     description:
       'Cut out the subject and composite it over a chosen background preset (white, black, studio grey, or a studio-blue/sunset/ocean/lavender gradient), baking a finished image with a feathered edge.',
-    params: {
-      background: z
-        .enum(['white', 'black', 'studio-grey', 'studio-blue', 'sunset', 'ocean', 'lavender'])
-        .optional()
-        .describe('Which background preset to composite the subject over. Defaults to "white".'),
-    },
-    requiresMask: false,
+    params: paramsShapeFor('replace-background', { background: 'Which background preset to composite the subject over. Defaults to "white".' }),
+    requiresMask: OPERATION_REQUIRES_MASK['replace-background'],
   },
   'strip-metadata': {
     operation: 'strip-metadata',
     name: 'strip_metadata',
     description:
       'Strip provenance/metadata tags — C2PA Content Credentials, AI-generator XMP tags, and EXIF — from a PNG or JPEG so it is not flagged as AI-generated, without changing the visible pixels. Does NOT remove visible watermarks or robust invisible pixel watermarks (e.g. SynthID).',
-    params: EMPTY_PARAMS,
-    requiresMask: false,
+    params: paramsShapeFor('strip-metadata'),
+    requiresMask: OPERATION_REQUIRES_MASK['strip-metadata'],
   },
   'auto-remove-watermark': {
     operation: 'auto-remove-watermark',
     name: 'auto_remove_watermark',
     description:
       'Automatically detect a visible watermark, logo, or text overlay stamped on a photo — no mask or brushing needed — and erase it by content-aware inpainting. The automatic sibling of remove_watermark (which needs a hand-painted mask). Works best on semi-transparent or text watermarks; may miss very complex or opaque logos — fall back to magic_eraser / remove_watermark and brush the region for those.',
-    params: {
-      strength: z
-        .enum(['low', 'medium', 'high'])
-        .optional()
-        .describe('How aggressively to dilate (pad) the detected watermark region before inpainting. Defaults to "medium".'),
-    },
-    requiresMask: false,
+    params: paramsShapeFor('auto-remove-watermark', { strength: 'How aggressively to dilate (pad) the detected watermark region before inpainting. Defaults to "medium".' }),
+    requiresMask: OPERATION_REQUIRES_MASK['auto-remove-watermark'],
+  },
+  'resize-image': {
+    operation: 'resize-image',
+    name: 'resize_image',
+    description:
+      'Resize an image to an exact width and/or height and re-encode it as PNG, JPEG or WebP. Plain deterministic geometry — no model runs, so it is FREE (0 credits) and returns immediately. Give at least one of width/height; "cover" and "fill" need both.',
+    params: paramsShapeFor('resize-image', {
+      width: 'Target width in pixels (1..8192). Optional if height is given.',
+      height: 'Target height in pixels (1..8192). Optional if width is given.',
+      fit: 'How to reconcile the target box with the source aspect ratio: "inside" (default, keep aspect and fit within), "cover" (keep aspect and crop to fill) or "fill" (stretch). "cover" and "fill" require BOTH width and height.',
+      format: 'Output encoding. Defaults to "png".',
+      quality: 'Encoder quality 1..100, for "jpeg"/"webp" only. Defaults to 90.',
+    }),
+    requiresMask: OPERATION_REQUIRES_MASK['resize-image'],
   },
 };
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { OPERATION_IDS, type OperationId } from '@snapnedit/shared';
+import { OPERATION_IDS, OPERATION_PARAMS, OPERATION_REQUIRES_MASK, type OperationId } from '@snapnedit/shared';
 import { SnapneditApiError, type DesignSpec, type RunOptions, type RunResult, type SnapneditClient } from '@snapnedit/sdk';
 import { buildTools, TOOL_DESCRIPTORS, type BuiltTool } from '../src/tools.js';
 import { buildDesignTools } from '../src/designTools.js';
@@ -130,6 +130,40 @@ describe('TOOL_DESCRIPTORS — exhaustive coverage over OPERATION_IDS', () => {
     const maskOps = TOOL_DESCRIPTORS.filter((d) => d.requiresMask).map((d) => d.operation).sort();
     expect(maskOps).toEqual(['generative-fill', 'magic-eraser', 'remove-watermark']);
   });
+
+  test('`requiresMask` is taken from @snapnedit/shared, not hand-copied', () => {
+    for (const descriptor of TOOL_DESCRIPTORS) {
+      expect(descriptor.requiresMask, `requiresMask mismatch for "${descriptor.operation}"`).toBe(
+        OPERATION_REQUIRES_MASK[descriptor.operation],
+      );
+    }
+  });
+
+  test('every descriptor\'s `params` keys are exactly OPERATION_PARAMS[operation].shape\'s keys', () => {
+    for (const descriptor of TOOL_DESCRIPTORS) {
+      const schemaKeys = Object.keys(OPERATION_PARAMS[descriptor.operation].shape);
+      expect(Object.keys(descriptor.params), `param drift for "${descriptor.operation}"`).toEqual(schemaKeys);
+    }
+  });
+
+  test('a derived enum param really is the schema\'s enum — the api accepts every option and nothing else', () => {
+    // Spot-check via the schema itself: the descriptor holds the SAME zod
+    // node (only `.describe()`d), so parsing through it is parsing through
+    // the server's own contract.
+    const upscale = TOOL_DESCRIPTORS.find((d) => d.operation === 'upscale');
+    expect(upscale?.params.factor?.safeParse('4').success).toBe(true);
+    expect(upscale?.params.factor?.safeParse('3').success).toBe(false);
+    // ...and the shared default rides along, so an omitted param is filled in.
+    expect(upscale?.params.factor?.safeParse(undefined).data).toBe('2');
+  });
+
+  test('resize_image is exposed, free of masks, and carries the full resize param set', () => {
+    const resize = TOOL_DESCRIPTORS.find((d) => d.operation === 'resize-image');
+    expect(resize?.name).toBe('resize_image');
+    expect(resize?.requiresMask).toBe(false);
+    expect(Object.keys(resize?.params ?? {})).toEqual(['width', 'height', 'fit', 'format', 'quality']);
+    expect(resize?.description).toContain('FREE');
+  });
 });
 
 describe('buildTools — exhaustive coverage', () => {
@@ -232,7 +266,10 @@ describe('handler — mask-guided ops', () => {
     await tool.handler({ image: b64([1]), mask: b64([2]), prompt: 'a red balloon' });
 
     expect(calls[0]?.operation).toBe('generative-fill');
-    expect(calls[0]?.opts?.params).toEqual({ prompt: 'a red balloon' });
+    // `mode` is not sent by the caller: the descriptor's params shape comes
+    // straight from `OPERATION_PARAMS['generative-fill']`, whose `mode` carries
+    // `.default('quality')`, so zod fills it in during arg validation.
+    expect(calls[0]?.opts?.params).toEqual({ prompt: 'a red balloon', mode: 'quality' });
     expect(bytesOf(calls[0]?.opts?.mask)).toEqual([2]);
   });
 });
