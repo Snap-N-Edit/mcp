@@ -1,12 +1,40 @@
 {
   "name": "@snapnedit/mcp",
   "version": "0.1.0",
+  "description": "Model Context Protocol server exposing the snapnedit AI photo-editing and design tools to agents over stdio.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Snap-N-Edit/mcp.git"
+  },
+  "homepage": "https://snapnedit.com/docs",
+  "bugs": {
+    "url": "https://github.com/Snap-N-Edit/mcp/issues"
+  },
+  "keywords": [
+    "snapnedit",
+    "mcp",
+    "model-context-protocol",
+    "ai-agent",
+    "claude",
+    "image-editing",
+    "photo-editor",
+    "design"
+  ],
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "snapnedit-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "exports": {
     ".": {
