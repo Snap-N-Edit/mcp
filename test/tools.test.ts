@@ -21,6 +21,7 @@ import { buildStorageTools } from '../src/storageTools.js';
 type DestinationMethods = Pick<
   SnapneditClient,
   | 'listDestinations'
+  | 'listDestinationSummaries'
   | 'createDestination'
   | 'updateDestination'
   | 'deleteDestination'
@@ -34,6 +35,7 @@ function destinationStubs(overrides: Partial<DestinationMethods> = {}): Destinat
   };
   return {
     listDestinations: overrides.listDestinations ?? unexpected('listDestinations'),
+    listDestinationSummaries: overrides.listDestinationSummaries ?? unexpected('listDestinationSummaries'),
     createDestination: overrides.createDestination ?? unexpected('createDestination'),
     updateDestination: overrides.updateDestination ?? unexpected('updateDestination'),
     deleteDestination: overrides.deleteDestination ?? unexpected('deleteDestination'),

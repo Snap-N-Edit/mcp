@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SnapneditApiError, type SnapneditClient } from '@snapnedit/sdk';
+import { isStorageDestinationView, SnapneditApiError, type SnapneditClient } from '@snapnedit/sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { BuiltTool } from './tools.js';
 
@@ -78,9 +78,10 @@ export function buildStorageTools(sdk: SnapneditClient): readonly BuiltTool[] {
                 name: destination.name,
                 provider: destination.provider,
                 bucket: destination.bucket,
-                keyPrefix: destination.keyPrefix,
+                ...(isStorageDestinationView(destination)
+                  ? { keyPrefix: destination.keyPrefix, deleteAfterDelivery: destination.deleteAfterDelivery }
+                  : {}),
                 isDefault: destination.isDefault,
-                deleteAfterDelivery: destination.deleteAfterDelivery,
               })),
             ),
           );
